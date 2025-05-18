@@ -2,6 +2,19 @@
 
 ChessSight is a computer vision project designed to identify and classify chess pieces on a chessboard using image processing techniques. This repository contains the code and resources needed to detect chess pieces in real-time, providing a foundation for applications in automated chess analysis and gameplay.
 
+## Development roadmap
+
+The goal of the projet is to create a chessboard detection and piece classification system that can be used in various applications, such as:
+- **Chess training**: Helping players improve their skills by analyzing their games.
+- **Chess analysis**: Providing insights into game strategies and tactics.
+- **Chess streaming**: Enhancing the viewing experience for online chess games by overlaying real-time analysis and commentary.
+
+Current roadmap is :
+
+* [ ] Chessboard detection: Implementing a robust algorithm to detect chessboards in images and videos.
+* [ ] Piece classification: Developing a machine learning model to classify chess pieces based on their appearance.
+* [ ] Real-time processing: Optimizing the system for real-time performance, allowing for live analysis of chess games.
+
 ## Prerequisites
 
 Before installing, make sure you have:
