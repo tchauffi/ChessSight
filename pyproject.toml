@@ -6,7 +6,7 @@ authors = [
     {name = "Thibaut CHAUFFIER",email = "tchauffi@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     
 ]
@@ -20,6 +20,25 @@ pre-commit = "^4.2.0"
 ruff = "^0.11.10"
 mypy = "^1.15.0"
 black = "^25.1.0"
+
+[tool.ruff]
+line-length = 88  # Match black's default line length
+target-version = "py312"
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
