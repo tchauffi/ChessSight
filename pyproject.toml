@@ -16,6 +16,16 @@ pre-commit = "^4.2.0"
 ruff = "^0.11.10"
 mypy = "^1.15.0"
 black = "^25.1.0"
+ipykernel = "^6.29.5"
+ipywidgets = "^8.1.7"
+
+
+[tool.poetry.dependencies]
+opencv-python = "^4.11.0.86"
+torch = "^2.7.0"
+torchvision = "^0.22.0"
+matplotlib = "^3.10.3"
+
 
 [tool.ruff]
 line-length = 88  # Match black's default line length
