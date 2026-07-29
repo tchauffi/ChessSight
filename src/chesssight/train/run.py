@@ -20,7 +20,7 @@ from chesssight.train.engine import (
     train_one_epoch,
     validation_loss,
 )
-from chesssight.train.evaluate import evaluate, format_report
+from chesssight.train.evaluate import evaluate_samples, format_report
 
 
 def train(config: TrainConfig, device: str | None = None) -> dict:
@@ -40,11 +40,29 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
         f"[chesssight] validating on {eval_root} split {config.eval_split!r}",
         flush=True,
     )
+
     print(f"[chesssight] model {config.model_name} on {resolved}", flush=True)
 
     processor = build_processor(config.model_name, config.image_size)
     model = build_model(config.model_name).to(resolved)
     train_loader, val_loader = build_loaders(config, processor)
+
+    # Validation scores detections the same way the reported result does. The
+    # loader path cannot apply the on-board filter -- it yields tensors, not
+    # samples -- so without this the selected checkpoint is chosen on a number
+    # dominated by captured pieces being counted as false positives. Measured on
+    # one checkpoint that was 0.80 against 0.88, and 0.49 against 0.89 for the
+    # black king alone.
+    from chesssight.data.dataset import DatasetReader
+    from chesssight.train.dataset import annotates_off_board
+
+    eval_reader = DatasetReader(eval_root)
+    eval_on_board = not annotates_off_board(eval_root)
+    print(
+        f"[chesssight] validation on-board filter: "
+        f"{'on' if eval_on_board else 'off'}",
+        flush=True,
+    )
 
     optimizer = torch.optim.AdamW(
         parameter_groups(model, config), weight_decay=config.weight_decay
@@ -78,7 +96,14 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
 
         if epoch % config.eval_every == 0 or epoch == config.epochs:
             record["val_loss"] = validation_loss(model, val_loader, resolved, config)
-            metrics = evaluate(model, val_loader, processor, resolved)
+            metrics = evaluate_samples(
+                model,
+                processor,
+                eval_reader,
+                resolved,
+                split=config.eval_split,
+                on_board=eval_on_board,
+            )
             record.update(metrics)
             print(
                 f"[chesssight] epoch {epoch}: train {loss:.4f} "
