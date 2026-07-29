@@ -115,14 +115,17 @@ def render_overlay(
         _draw_pieces(draw, sample, shift)
 
     visible = sum(1 for piece in sample.pieces if piece.visible)
+    # Real photographs have no reprojection error to report: their corners are
+    # clicked, not projected, so there is no second computation to compare against.
     error = sample.board.reprojection_error_px
+    error_text = "reproj n/a" if error is None else f"reproj {error:.4f} px"
     draw.text((6, 4), f"{sample.id}  {sample.fen.split()[0]}", fill=(235, 235, 235))
     draw.text(
         (6, 18),
         f"{len(sample.pieces)} pieces ({visible} visible)   "
-        f"reproj {error:.4f} px   "
+        f"{error_text}   "
         f"corners in frame: {sample.board.all_corners_in_frame}   "
-        f"{sample.render.engine if sample.render else 'n/a'}",
+        f"{sample.render.engine if sample.render else sample.source}",
         fill=(160, 160, 170),
     )
     draw.text(

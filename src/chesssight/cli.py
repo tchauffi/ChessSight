@@ -170,6 +170,12 @@ def synth_verify(
     reader = DatasetReader(out)
     problems: list[str] = []
     total = 0
+    real_in_train = 0
+    # A dataset that is entirely real photographs carries its own train/val/test
+    # division, and training on it is the point. The thing worth warning about is
+    # real images mixed into a *synthetic* training set, where they would stop the
+    # held-out number meaning anything.
+    all_real = reader.meta().source == "real"
 
     for sample in reader:
         total += 1
@@ -181,12 +187,19 @@ def synth_verify(
         if error is not None and error > 0.5:
             problems.append(f"{sample.id}: reprojection error {error:.3f} px")
         if sample.source == "real" and sample.split == "train":
-            problems.append(
-                f"{sample.id}: real photograph in the train split; real data should "
-                f"be held out for validation so the number stays honest"
-            )
+            real_in_train += 1
+            if not all_real:
+                problems.append(
+                    f"{sample.id}: real photograph in a synthetic training set; "
+                    f"holding real data out is what keeps the number honest"
+                )
 
     typer.echo(f"checked {total} samples, {len(problems)} problem(s)")
+    if all_real and real_in_train:
+        typer.echo(
+            f"  note: {real_in_train} real samples in the train split, which is "
+            f"expected for a real dataset with its own splits"
+        )
     for problem in problems[:40]:
         typer.echo(f"  {problem}")
     if problems:
@@ -569,3 +582,42 @@ def train_evaluate(
     )
     typer.echo(f"evaluating {len(dataset)} samples from split {split!r}")
     typer.echo(format_report(run_eval(model, loader, processor, resolved)))
+
+
+@data_app.command("ingest-chessred")
+def data_ingest_chessred(
+    annotations: Annotated[Path, typer.Argument(help="ChessReD annotations.json")],
+    images: Annotated[
+        Path, typer.Option("--images", help="Extracted images/ directory.")
+    ],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Run directory to create.")],
+    subset: Annotated[str, typer.Option("--subset")] = "chessred2k",
+    force_split: Annotated[
+        str | None,
+        typer.Option("--force-split", help="Put every sample in one split."),
+    ] = None,
+    copy_images: Annotated[
+        bool, typer.Option("--copy-images", help="Copy instead of symlinking.")
+    ] = False,
+) -> None:
+    """Ingest ChessReD real photographs into the ChessSight format.
+
+    Only the annotated subset can be fully ingested: piece positions exist for all
+    10,800 images, but the board corners and per-piece boxes this schema needs are
+    provided for 2,078 of them.
+
+    ChessReD is CC BY-NC-SA 4.0 -- non-commercial *and* ShareAlike. The terms are
+    recorded in the run's meta.json.
+    """
+    from chesssight.data.chessred import ingest
+
+    result = ingest(
+        Path(annotations),
+        Path(images),
+        Path(out),
+        subset=subset,
+        force_split=force_split,
+        link_images=not copy_images,
+    )
+    typer.echo(f"ingested {result['written']} samples, skipped {result['skipped']}")
+    typer.echo(f"  -> {out}")
