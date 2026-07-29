@@ -511,7 +511,13 @@ app.add_typer(train_app, name="train")
 
 @train_app.command("detr")
 def train_detr(
-    data: Annotated[Path, typer.Argument(help="Run directory to train on.")],
+    data: Annotated[
+        list[Path],
+        typer.Argument(
+            help="One or more run directories. Several are trained on together, "
+            "which is how synthetic renders and real photographs get mixed."
+        ),
+    ],
     out: Annotated[
         Path, typer.Option("--out", "-o", help="Where to save checkpoints.")
     ],
@@ -525,6 +531,23 @@ def train_detr(
     image_size: Annotated[int, typer.Option("--image-size")] = 640,
     workers: Annotated[int, typer.Option("--workers", "-w")] = 4,
     val_fraction: Annotated[float, typer.Option("--val-fraction")] = 0.1,
+    repeats: Annotated[
+        str | None,
+        typer.Option(
+            "--repeats",
+            help="Comma-separated oversampling per dataset, e.g. '1,5'. Real "
+            "photographs are the target domain and there are far fewer of them.",
+        ),
+    ] = None,
+    eval_dataset: Annotated[
+        int,
+        typer.Option(
+            "--eval-dataset",
+            help="Index of the dataset to validate on. Defaults to the last, "
+            "which is the real set in a synthetic-plus-real mix.",
+        ),
+    ] = -1,
+    eval_split: Annotated[str, typer.Option("--eval-split")] = "val",
     limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
     device: Annotated[str | None, typer.Option("--device")] = None,
 ) -> None:
@@ -537,9 +560,13 @@ def train_detr(
     from chesssight.train.engine import TrainConfig
     from chesssight.train.run import train as run_training
 
+    parsed_repeats = [int(value) for value in repeats.split(",")] if repeats else []
     config = TrainConfig(
-        data_root=Path(data),
+        data_roots=[Path(root) for root in data],
         output_dir=Path(out),
+        repeats=parsed_repeats,
+        eval_dataset=eval_dataset,
+        eval_split=eval_split,
         model_name=model,
         epochs=epochs,
         batch_size=batch_size,
@@ -621,3 +648,155 @@ def data_ingest_chessred(
     )
     typer.echo(f"ingested {result['written']} samples, skipped {result['skipped']}")
     typer.echo(f"  -> {out}")
+
+
+@train_app.command("predict")
+def train_predict(
+    checkpoint: Annotated[Path, typer.Argument(help="Saved checkpoint directory.")],
+    data: Annotated[Path, typer.Option("--data", help="Run directory to draw from.")],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Contact sheet to write.")],
+    split: Annotated[str, typer.Option("--split")] = "test",
+    split_source: Annotated[
+        str,
+        typer.Option(
+            "--split-source",
+            help="'stored' uses the dataset's own splits, 'hash' reproduces the "
+            "training-time hold-out, 'auto' picks per dataset. A synthetic run "
+            "stores one split for everything, so 'stored' would show training "
+            "images and overstate the result.",
+        ),
+    ] = "auto",
+    count: Annotated[int, typer.Option("--count", "-n")] = 6,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            help="Score floor. Defaults to 0 because ranking, not thresholding, is "
+            "what works on a partly-trained detector.",
+        ),
+    ] = 0.0,
+    top_k: Annotated[
+        int | None,
+        typer.Option(
+            "--top-k",
+            help="Draw the N highest-scoring boxes instead of thresholding. "
+            "Use while a model is still training, when scores are low but the "
+            "ranking is already good.",
+        ),
+    ] = None,
+    columns: Annotated[int, typer.Option("--columns")] = 2,
+    no_truth: Annotated[bool, typer.Option("--no-truth")] = False,
+    on_board: Annotated[
+        bool | None,
+        typer.Option(
+            "--on-board/--all-detections",
+            help="Keep only detections standing on the board. Defaults to on for a "
+            "dataset that annotates on-board pieces only (ChessReD), and off for "
+            "one that annotates captured pieces too (our synthetic runs).",
+        ),
+    ] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Draw a detector's predictions onto images and write a contact sheet.
+
+    Ground truth is drawn alongside in green, because the informative part is the
+    difference: a red box with no green under it is a false positive, a green box
+    with nothing on it is a miss.
+    """
+    from PIL import Image
+
+    from chesssight.data.qa import contact_sheet
+    from chesssight.train.dataset import SplitSpec
+    from chesssight.train.run import load_trained
+    from chesssight.train.visualize import (
+        draw_predictions,
+        on_board_only,
+        predict,
+        square_accuracy,
+        take_top,
+    )
+
+    reader = DatasetReader(data)
+    all_entries = reader.entries()
+    stored_splits = {entry.split for entry in all_entries}
+
+    source = split_source
+    if source == "auto":
+        source = "stored" if len(stored_splits) > 1 else "hash"
+
+    if source == "stored":
+        entries = [e for e in all_entries if split == "all" or e.split == split]
+    else:
+        # Reproduce the training-time hold-out exactly, so what is drawn is data
+        # the model has genuinely not seen.
+        spec = SplitSpec()
+        wanted_val = split in ("val", "test")
+        entries = [
+            e for e in all_entries if split == "all" or spec.is_val(e.id) == wanted_val
+        ]
+
+    if not entries:
+        typer.echo(f"no samples in split {split!r} using {source} splits")
+        raise typer.Exit(1)
+    typer.echo(f"{len(entries)} samples in split {split!r} ({source} splits)")
+
+    model, processor, resolved = load_trained(Path(checkpoint), device)
+    step = max(1, len(entries) // count)
+    chosen = entries[::step][:count]
+
+    if on_board is None:
+        # If the dataset annotates pieces beside the board, filtering them out
+        # would discard correct detections that its ground truth expects.
+        probe = [reader.load(entry.id) for entry in chosen]
+        annotates_off_board = any(
+            not piece.on_board for sample in probe for piece in sample.pieces
+        )
+        on_board = not annotates_off_board
+        why = (
+            "dataset annotates on-board pieces only"
+            if on_board
+            else "dataset annotates captured pieces too"
+        )
+        typer.echo(f"on-board filter: {'on' if on_board else 'off'} ({why})")
+
+    panels = []
+    accuracies = []
+    for entry in chosen:
+        sample = reader.load(entry.id)
+        image = Image.open(reader.root / sample.image).convert("RGB")
+        # Rank rather than threshold: a partly-trained DETR orders boxes well long
+        # before its scores are confident, so a fixed threshold shows an empty
+        # image and hides a model that works.
+        predictions = predict(model, processor, image, resolved, threshold=threshold)
+        if on_board:
+            predictions = on_board_only(predictions, sample)
+        k = top_k if top_k else sum(1 for p in sample.pieces if p.bbox)
+        predictions = take_top(predictions, k)
+        accuracy = square_accuracy(sample, predictions)
+        accuracies.append(accuracy)
+        n_predicted = sum(1 for p in predictions if p["name"] != "board")
+        n_annotated = sum(1 for p in sample.pieces if p.bbox)
+        panels.append(
+            draw_predictions(
+                image,
+                predictions,
+                sample=sample,
+                show_truth=not no_truth,
+                title=(
+                    f"{sample.id}  "
+                    f"{n_predicted} predicted / {n_annotated} annotated  "
+                    f"occupied-square acc {accuracy['occupied_correct']:.0%}"
+                ),
+            )
+        )
+
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    contact_sheet(panels, columns=columns, cell_width=900).save(out)
+
+    mean_occupied = sum(a["occupied_correct"] for a in accuracies) / len(accuracies)
+    typer.echo(f"wrote {out}")
+    typer.echo(
+        f"  mean occupied-square accuracy over {len(chosen)} images: "
+        f"{mean_occupied:.1%}"
+    )

@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torchmetrics.detection import MeanAveragePrecision
 
 from chesssight.train.dataset import ChessDetectionDataset
-from chesssight.train.labels import DETECTION_LABELS
+from chesssight.train.labels import DETECTION_LABELS, class_id_to_index
 
 
 def _targets_to_xyxy(labels: list[dict], sizes: torch.Tensor) -> list[dict]:
@@ -163,3 +163,111 @@ def predict_sample(
             strict=True,
         )
     ]
+
+
+def _board_box(sample) -> list[float] | None:
+    from chesssight.data.export import board_bbox
+
+    box = board_bbox(sample)
+    return list(box.xyxy) if box is not None else None
+
+
+@torch.no_grad()
+def evaluate_samples(
+    model,
+    processor,
+    reader,
+    device: torch.device,
+    *,
+    split: str = "test",
+    on_board: bool = False,
+    limit: int | None = None,
+) -> dict[str, float]:
+    """Evaluate sample-by-sample, so each image's board polygon is available.
+
+    The DataLoader path cannot filter by board: it yields tensors, not samples.
+    Filtering matters because the synthetic data deliberately teaches the detector
+    to find captured pieces beside the board, while ChessReD annotates on-board
+    pieces only -- so correct detections of captured pieces score as false
+    positives against it.
+    """
+    from PIL import Image
+
+    from chesssight.data.geometry import polygon_contains
+    from chesssight.train.labels import BOARD_INDEX
+
+    model.eval()
+    metric = MeanAveragePrecision(box_format="xyxy", class_metrics=True)
+
+    entries = [e for e in reader.entries() if split == "all" or e.split == split]
+    if limit:
+        entries = entries[:limit]
+
+    for entry in entries:
+        sample = reader.load(entry.id)
+        image = Image.open(reader.root / sample.image).convert("RGB")
+
+        inputs = processor(images=image, return_tensors="pt").to(device)
+        outputs = model(**inputs)
+        sizes = torch.tensor([[image.height, image.width]], device=device)
+        result = processor.post_process_object_detection(
+            outputs, target_sizes=sizes, threshold=0.0
+        )[0]
+
+        boxes = result["boxes"].cpu()
+        scores = result["scores"].cpu()
+        labels = result["labels"].cpu()
+
+        if on_board:
+            keep = [
+                index
+                for index in range(len(boxes))
+                if int(labels[index]) == BOARD_INDEX
+                or polygon_contains(
+                    sample.board.corners_px,
+                    (
+                        (boxes[index][0].item() + boxes[index][2].item()) / 2.0,
+                        boxes[index][3].item(),
+                    ),
+                )
+            ]
+            selection = torch.tensor(keep, dtype=torch.long)
+            boxes = boxes[selection]
+            scores = scores[selection]
+            labels = labels[selection]
+
+        truth_boxes: list[list[float]] = []
+        truth_labels: list[int] = []
+        for piece in sample.pieces:
+            if piece.bbox is None:
+                continue
+            truth_boxes.append(list(piece.bbox.xyxy))
+            truth_labels.append(class_id_to_index(piece.class_id))
+        board = _board_box(sample)
+        if board is not None:
+            truth_boxes.append(board)
+            truth_labels.append(BOARD_INDEX)
+
+        metric.update(
+            [{"boxes": boxes, "scores": scores, "labels": labels}],
+            [
+                {
+                    "boxes": torch.tensor(truth_boxes, dtype=torch.float32).reshape(
+                        -1, 4
+                    ),
+                    "labels": torch.tensor(truth_labels, dtype=torch.long),
+                }
+            ],
+        )
+
+    computed = metric.compute()
+    report = {
+        key: float(computed[key])
+        for key in ("map", "map_50", "map_75", "map_small", "map_medium", "map_large")
+    }
+    per_class = computed.get("map_per_class")
+    classes = computed.get("classes")
+    if per_class is not None and classes is not None:
+        for value, index in zip(per_class.tolist(), classes.tolist(), strict=True):
+            report[f"map/{DETECTION_LABELS[int(index)]}"] = float(value)
+    return report

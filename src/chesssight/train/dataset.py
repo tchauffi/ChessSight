@@ -15,7 +15,7 @@ from pathlib import Path
 
 import torch
 from PIL import Image
-from torch.utils.data import Dataset
+from torch.utils.data import ConcatDataset, Dataset
 
 from chesssight.data.dataset import DatasetReader
 from chesssight.data.export import board_bbox
@@ -45,12 +45,16 @@ class SplitSpec:
         return int.from_bytes(digest, "big") / 2**32 < self.val_fraction
 
 
-def _annotations(sample: Sample, *, include_board: bool) -> list[dict]:
+def _annotations(
+    sample: Sample, *, include_board: bool, include_off_board: bool = True
+) -> list[dict]:
     """COCO-style annotations for one sample, in detector label indices."""
     records: list[dict] = []
 
     for piece in sample.pieces:
         if not piece.visible or piece.bbox is None:
+            continue
+        if not include_off_board and not piece.on_board:
             continue
         if piece.bbox.width < MIN_BOX_SIDE_PX or piece.bbox.height < MIN_BOX_SIDE_PX:
             continue
@@ -97,6 +101,7 @@ class ChessDetectionDataset(Dataset):
         split: str = "train",
         split_spec: SplitSpec | None = None,
         include_board: bool = True,
+        include_off_board: bool = True,
         limit: int | None = None,
         split_source: str = "auto",
     ) -> None:
@@ -108,6 +113,7 @@ class ChessDetectionDataset(Dataset):
         self.root = Path(root)
         self.processor = processor
         self.include_board = include_board
+        self.include_off_board = include_off_board
         self.split = split
 
         reader = DatasetReader(self.root)
@@ -158,7 +164,11 @@ class ChessDetectionDataset(Dataset):
         image = Image.open(self.root / sample.image).convert("RGB")
         target = {
             "image_id": index,
-            "annotations": _annotations(sample, include_board=self.include_board),
+            "annotations": _annotations(
+                sample,
+                include_board=self.include_board,
+                include_off_board=self.include_off_board,
+            ),
         }
         encoding = self.processor(images=image, annotations=target, return_tensors="pt")
         return {
@@ -186,3 +196,54 @@ def describe_split(root: Path, spec: SplitSpec | None = None) -> dict[str, int]:
     val = sum(1 for entry in reader.entries() if spec.is_val(entry.id))
     total = len(reader.entries())
     return {"total": total, "train": total - val, "val": val}
+
+
+def annotates_off_board(root: Path, probe: int = 200) -> bool:
+    """Whether a dataset labels pieces standing beside the board."""
+    reader = DatasetReader(root)
+    for entry in reader.entries()[:probe]:
+        if any(not piece.on_board for piece in reader.load(entry.id).pieces):
+            return True
+    return False
+
+
+def build_mixed(
+    roots: Sequence[Path],
+    processor,
+    *,
+    split: str,
+    split_spec: SplitSpec | None = None,
+    repeats: Sequence[int] | None = None,
+    include_board: bool = True,
+) -> ConcatDataset:
+    """Concatenate several runs into one training set.
+
+    Off-board annotations are dropped from *every* dataset as soon as one of them
+    lacks the convention. Mixing them otherwise is actively harmful: a captured
+    piece is a labelled positive in a synthetic render and unlabelled background in
+    a ChessReD photograph, so the same visual pattern would be trained in both
+    directions at once.
+
+    ``repeats`` oversamples the smaller sets. Real photographs are the target
+    domain and there are far fewer of them, so seeing each one once per epoch
+    against seven thousand renders wastes most of their value.
+    """
+    conventions = [annotates_off_board(root) for root in roots]
+    include_off_board = all(conventions)
+
+    counts = repeats or [1] * len(roots)
+    if len(counts) != len(roots):
+        raise ValueError(f"got {len(counts)} repeat values for {len(roots)} datasets")
+
+    parts: list[Dataset] = []
+    for root, repeat in zip(roots, counts, strict=True):
+        dataset = ChessDetectionDataset(
+            root,
+            processor,
+            split=split,
+            split_spec=split_spec,
+            include_board=include_board,
+            include_off_board=include_off_board,
+        )
+        parts.extend([dataset] * repeat)
+    return ConcatDataset(parts)

@@ -18,7 +18,13 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoImageProcessor, AutoModelForObjectDetection
 
-from chesssight.train.dataset import ChessDetectionDataset, SplitSpec, collate
+from chesssight.train.dataset import (
+    ChessDetectionDataset,
+    SplitSpec,
+    annotates_off_board,
+    build_mixed,
+    collate,
+)
 from chesssight.train.labels import ID2LABEL, LABEL2ID, NUM_DETECTION_LABELS
 
 DEFAULT_MODEL = "PekingU/rtdetr_r50vd_coco_o365"
@@ -28,7 +34,9 @@ DEFAULT_MODEL = "PekingU/rtdetr_r50vd_coco_o365"
 class TrainConfig:
     """Everything that defines a fine-tuning run."""
 
-    data_root: Path
+    #: One or more run directories. Several are concatenated, which is how a
+    #: synthetic set and real photographs get trained on together.
+    data_roots: list[Path]
     output_dir: Path
     model_name: str = DEFAULT_MODEL
     epochs: int = 20
@@ -46,12 +54,19 @@ class TrainConfig:
     amp: bool = True
     seed: int = 0
     limit: int | None = None
+    #: Per-dataset oversampling. Real photographs are the target domain and there
+    #: are far fewer of them, so one pass each per epoch wastes most of their value.
+    repeats: list[int] = field(default_factory=list)
+    #: Which dataset to validate against, by index into ``data_roots``. Defaults to
+    #: the last, which is the real set in a synthetic-plus-real mix.
+    eval_dataset: int = -1
+    eval_split: str = "val"
     eval_every: int = 1
     extra: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
         payload = asdict(self)
-        payload["data_root"] = str(self.data_root)
+        payload["data_roots"] = [str(root) for root in self.data_roots]
         payload["output_dir"] = str(self.output_dir)
         return json.dumps(payload, indent=2)
 
@@ -114,13 +129,28 @@ def cosine_schedule(optimizer, total_steps: int, warmup_fraction: float):
 
 def build_loaders(config: TrainConfig, processor) -> tuple[DataLoader, DataLoader]:
     spec = SplitSpec(val_fraction=config.val_fraction)
-    common = {
-        "processor": processor,
-        "split_spec": spec,
-        "limit": config.limit,
-    }
-    train_set = ChessDetectionDataset(config.data_root, split="train", **common)
-    val_set = ChessDetectionDataset(config.data_root, split="val", **common)
+    repeats = config.repeats or [1] * len(config.data_roots)
+
+    train_set = build_mixed(
+        config.data_roots,
+        processor,
+        split="train",
+        split_spec=spec,
+        repeats=repeats,
+    )
+
+    # Validate against one dataset rather than the mix. A loss averaged over
+    # synthetic and real together tracks neither, and the number worth watching is
+    # the one on the domain the model has to work in.
+    eval_root = config.data_roots[config.eval_dataset]
+    val_set = ChessDetectionDataset(
+        eval_root,
+        processor,
+        split=config.eval_split,
+        split_spec=spec,
+        include_off_board=all(annotates_off_board(root) for root in config.data_roots),
+        limit=config.limit,
+    )
 
     return (
         DataLoader(

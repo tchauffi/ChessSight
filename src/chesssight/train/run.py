@@ -27,10 +27,17 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
     torch.manual_seed(config.seed)
     resolved = resolve_device(device)
 
-    counts = describe_split(config.data_root, SplitSpec(config.val_fraction))
+    repeats = config.repeats or [1] * len(config.data_roots)
+    for root, repeat in zip(config.data_roots, repeats, strict=True):
+        counts = describe_split(root, SplitSpec(config.val_fraction))
+        suffix = f" x{repeat}" if repeat > 1 else ""
+        print(
+            f"[chesssight] {counts['total']} samples from {root}{suffix}",
+            flush=True,
+        )
+    eval_root = config.data_roots[config.eval_dataset]
     print(
-        f"[chesssight] {counts['total']} samples "
-        f"({counts['train']} train / {counts['val']} val) from {config.data_root}",
+        f"[chesssight] validating on {eval_root} split {config.eval_split!r}",
         flush=True,
     )
     print(f"[chesssight] model {config.model_name} on {resolved}", flush=True)
