@@ -55,18 +55,19 @@ def iou(box_xywh: list[float], bounds: tuple[float, float, float, float]) -> flo
     return inter / union if union > 0 else 0.0
 
 
-def geometry_only(**overrides) -> AugmentConfig:
-    base = {
-        "image_size": 256,
-        "photometric_probability": 0.0,
-        "noise_probability": 0.0,
-        "blur_probability": 0.0,
-        "jpeg_probability": 0.0,
-        "crop_probability": 0.0,
-        "rotation_probability": 0.0,
-    }
-    base.update(overrides)
-    return AugmentConfig(**base)
+def geometry_only(
+    *, crop_probability: float = 0.0, rotation_probability: float = 0.0
+) -> AugmentConfig:
+    """Only the geometric families, so a box test measures geometry alone."""
+    return AugmentConfig(
+        image_size=256,
+        photometric_probability=0.0,
+        noise_probability=0.0,
+        blur_probability=0.0,
+        jpeg_probability=0.0,
+        crop_probability=crop_probability,
+        rotation_probability=rotation_probability,
+    )
 
 
 def run(config: AugmentConfig, draws: int = 30, seed: int = 0) -> list[float]:
