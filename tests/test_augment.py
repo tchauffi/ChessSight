@@ -55,17 +55,18 @@ def iou(box_xywh: list[float], bounds: tuple[float, float, float, float]) -> flo
     return inter / union if union > 0 else 0.0
 
 
-def geometry_only(
-    *, crop_probability: float = 0.0, rotation_probability: float = 0.0
-) -> AugmentConfig:
-    """Only the geometric families, so a box test measures geometry alone."""
+def geometry_only(*, rotation_probability: float = 0.0) -> AugmentConfig:
+    """Only the geometric families, so a box test measures geometry alone.
+
+    The crop is not optional -- it is what brings an image to working size -- so
+    only rotation is switched here.
+    """
     return AugmentConfig(
         image_size=256,
         photometric_probability=0.0,
         noise_probability=0.0,
         blur_probability=0.0,
         jpeg_probability=0.0,
-        crop_probability=crop_probability,
         rotation_probability=rotation_probability,
     )
 
@@ -87,7 +88,7 @@ def run(config: AugmentConfig, draws: int = 30, seed: int = 0) -> list[float]:
 
 class TestGeometryTracksBoxes:
     def test_crop_keeps_the_box_on_the_object(self):
-        scores = run(geometry_only(crop_probability=1.0))
+        scores = run(geometry_only())
         assert len(scores) >= 20
         assert min(scores) > 0.85
 
@@ -97,9 +98,32 @@ class TestGeometryTracksBoxes:
         assert min(scores) > 0.85
 
     def test_crop_and_rotation_together(self):
-        scores = run(geometry_only(crop_probability=1.0, rotation_probability=1.0))
+        scores = run(geometry_only(rotation_probability=1.0))
         assert len(scores) >= 20
         assert float(np.median(scores)) > 0.85
+
+
+class TestWorkingResolution:
+    """Augmenting at native size is correct but 20x slower, and every one of
+    those pixels is discarded by the resize a moment later."""
+
+    def test_output_is_always_the_working_size(self):
+        transform = build_transform(AugmentConfig(image_size=256))
+        torch.manual_seed(0)
+        big = marked_image(1024)
+        image, _, _ = apply(transform, big, [[320.0, 400.0, 240.0, 160.0]], [0])
+        assert image.size == (256, 256)
+
+    def test_the_crop_cannot_reach_the_rotation_fill(self):
+        # The inscribed square of an image rotated by d degrees is
+        # 1 / (cos d + sin d) of its width; the crop's upper scale bound must
+        # stay under that in area, or fill wedges survive into the output.
+        import math
+
+        config = AugmentConfig()
+        degrees = math.radians(config.rotation_degrees)
+        inscribed_linear = 1.0 / (math.cos(degrees) + math.sin(degrees))
+        assert config.crop_scale[1] ** 0.5 < inscribed_linear
 
 
 class TestNoFlips:
@@ -123,8 +147,10 @@ class TestPhotometricLeavesGeometryAlone:
     def test_colour_and_sensor_effects_do_not_move_the_box(self):
         config = AugmentConfig(
             image_size=256,
-            crop_probability=0.0,
             rotation_probability=0.0,
+            crop_scale=(1.0, 1.0),
+            crop_ratio=(1.0, 1.0),
+            work_scale=1.0,
             photometric_probability=1.0,
             noise_probability=1.0,
             blur_probability=1.0,
@@ -134,7 +160,9 @@ class TestPhotometricLeavesGeometryAlone:
         torch.manual_seed(0)
         _, boxes, _ = apply(transform, marked_image(), [list(MARKER_BOX)], [0])
         assert boxes
-        assert boxes[0] == pytest.approx(MARKER_BOX, abs=1e-3)
+        # A full-frame crop at working scale 1.0 is the identity, so colour and
+        # sensor effects must leave the coordinates untouched.
+        assert boxes[0] == pytest.approx(MARKER_BOX, abs=0.5)
 
 
 class TestSanitisation:
@@ -162,7 +190,7 @@ class TestSanitisation:
 
 
 def test_an_empty_annotation_list_is_handled():
-    transform = build_transform(geometry_only(crop_probability=1.0))
+    transform = build_transform(geometry_only())
     image, boxes, labels = apply(transform, marked_image(), [], [])
     assert boxes == []
     assert labels == []

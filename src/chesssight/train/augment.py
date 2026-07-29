@@ -60,11 +60,20 @@ class AugmentConfig:
     jpeg_probability: float = 0.3
     jpeg_quality: tuple[int, int] = (40, 90)
 
-    #: Geometry. Scale and translation jitter, which also produces partially
-    #: cropped boards -- something real photographs do constantly.
-    crop_probability: float = 0.5
-    crop_scale: tuple[float, float] = (0.6, 1.0)
+    #: Geometry. The crop always runs -- it is what brings an image down to the
+    #: working resolution, and its scale range is what makes it an augmentation
+    #: rather than a plain resize. Small scales also produce partially cropped
+    #: boards, which real photographs do constantly.
+    #:
+    #: The upper bound is capped below the inscribed square of a rotated image
+    #: (~0.886 linear, ~0.78 area at 8 degrees) so the crop never includes the
+    #: wedges of fill that rotation leaves in the corners.
+    crop_scale: tuple[float, float] = (0.45, 0.72)
     crop_ratio: tuple[float, float] = (0.85, 1.18)
+    #: Working canvas before the crop, as a multiple of ``image_size``. Everything
+    #: after the initial resize runs at roughly the output resolution, which is the
+    #: difference between 6 ms and 330 ms per image on a 3072px photograph.
+    work_scale: float = 1.2
     #: Camera roll, in degrees. Small on purpose: see the module docstring.
     rotation_degrees: float = 8.0
     rotation_probability: float = 0.3
@@ -84,11 +93,17 @@ def build_transform(config: AugmentConfig) -> v2.Transform:
     framing -- blurring before a crop would sharpen the result back up by
     resampling, which is not what a real camera does.
     """
-    steps: list[v2.Transform] = []
+    work = int(round(config.image_size * config.work_scale))
+
+    # Downscale first. ChessReD photographs are 3072 square and everything here
+    # is resolution-bound: blurring, JPEG round-tripping and noising at native
+    # size costs 330 ms an image against 6 ms at working size, and every one of
+    # those pixels is discarded by the resize a moment later anyway.
+    steps: list[v2.Transform] = [v2.Resize(size=(work, work), antialias=True)]
 
     # Rotation comes *before* the crop, not after. Rotating without expanding
-    # leaves wedges of fill in the corners; cropping afterwards removes most of
-    # them. The other order bakes those wedges into the final image.
+    # leaves wedges of fill in the corners; cropping afterwards removes them.
+    # The other order bakes those wedges into the final image.
     if config.rotation_probability > 0 and config.rotation_degrees > 0:
         steps.append(
             v2.RandomApply(
@@ -102,20 +117,14 @@ def build_transform(config: AugmentConfig) -> v2.Transform:
                 p=config.rotation_probability,
             )
         )
-    if config.crop_probability > 0:
-        steps.append(
-            v2.RandomApply(
-                [
-                    v2.RandomResizedCrop(
-                        size=(config.image_size, config.image_size),
-                        scale=config.crop_scale,
-                        ratio=config.crop_ratio,
-                        antialias=True,
-                    )
-                ],
-                p=config.crop_probability,
-            )
+    steps.append(
+        v2.RandomResizedCrop(
+            size=(config.image_size, config.image_size),
+            scale=config.crop_scale,
+            ratio=config.crop_ratio,
+            antialias=True,
         )
+    )
 
     if config.photometric_probability > 0:
         steps.append(
