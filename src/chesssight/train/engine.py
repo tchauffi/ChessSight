@@ -52,6 +52,9 @@ class TrainConfig:
     val_fraction: float = 0.1
     image_size: int = 640
     amp: bool = True
+    #: Train-time augmentation. Off by default so a run without it is the baseline
+    #: any measurement of its value is made against.
+    augment: bool = False
     seed: int = 0
     limit: int | None = None
     #: Per-dataset oversampling. Real photographs are the target domain and there
@@ -131,12 +134,19 @@ def build_loaders(config: TrainConfig, processor) -> tuple[DataLoader, DataLoade
     spec = SplitSpec(val_fraction=config.val_fraction)
     repeats = config.repeats or [1] * len(config.data_roots)
 
+    transform = None
+    if config.augment:
+        from chesssight.train.augment import AugmentConfig, build_transform
+
+        transform = build_transform(AugmentConfig(image_size=config.image_size))
+
     train_set = build_mixed(
         config.data_roots,
         processor,
         split="train",
         split_spec=spec,
         repeats=repeats,
+        transform=transform,
     )
 
     # Validate against one dataset rather than the mix. A loss averaged over

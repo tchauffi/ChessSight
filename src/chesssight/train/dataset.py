@@ -104,6 +104,7 @@ class ChessDetectionDataset(Dataset):
         include_off_board: bool = True,
         limit: int | None = None,
         split_source: str = "auto",
+        transform=None,
     ) -> None:
         if split not in ("train", "val", "test", "all"):
             raise ValueError(f"split must be train, val, test or all; got {split!r}")
@@ -115,6 +116,9 @@ class ChessDetectionDataset(Dataset):
         self.include_board = include_board
         self.include_off_board = include_off_board
         self.split = split
+        # Augmentation applies to training only; a validation set that changes
+        # every epoch measures nothing.
+        self.transform = transform
 
         reader = DatasetReader(self.root)
         spec = split_spec or SplitSpec()
@@ -162,14 +166,32 @@ class ChessDetectionDataset(Dataset):
     def __getitem__(self, index: int):
         sample = self.sample(index)
         image = Image.open(self.root / sample.image).convert("RGB")
-        target = {
-            "image_id": index,
-            "annotations": _annotations(
-                sample,
-                include_board=self.include_board,
-                include_off_board=self.include_off_board,
-            ),
-        }
+        records = _annotations(
+            sample,
+            include_board=self.include_board,
+            include_off_board=self.include_off_board,
+        )
+
+        if self.transform is not None and records:
+            from chesssight.train.augment import apply as apply_augmentation
+
+            image, boxes, labels = apply_augmentation(
+                self.transform,
+                image,
+                [record["bbox"] for record in records],
+                [record["category_id"] for record in records],
+            )
+            records = [
+                {
+                    "bbox": box,
+                    "category_id": label,
+                    "area": float(box[2] * box[3]),
+                    "iscrowd": 0,
+                }
+                for box, label in zip(boxes, labels, strict=True)
+            ]
+
+        target = {"image_id": index, "annotations": records}
         encoding = self.processor(images=image, annotations=target, return_tensors="pt")
         return {
             "pixel_values": encoding["pixel_values"].squeeze(0),
@@ -215,6 +237,7 @@ def build_mixed(
     split_spec: SplitSpec | None = None,
     repeats: Sequence[int] | None = None,
     include_board: bool = True,
+    transform=None,
 ) -> ConcatDataset:
     """Concatenate several runs into one training set.
 
@@ -244,6 +267,7 @@ def build_mixed(
             split_spec=split_spec,
             include_board=include_board,
             include_off_board=include_off_board,
+            transform=transform,
         )
         parts.extend([dataset] * repeat)
     return ConcatDataset(parts)

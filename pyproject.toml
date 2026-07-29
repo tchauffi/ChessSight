@@ -81,6 +81,11 @@ exclude = ["^src/chesssight/blender/"]
 module = ["chesssight.blender.*"]
 ignore_missing_imports = true
 
+# torchvision ships no py.typed marker, so its transforms are untyped to mypy.
+[[tool.mypy.overrides]]
+module = ["torchvision.*", "transformers.*", "torchmetrics.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

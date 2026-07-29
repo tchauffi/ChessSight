@@ -548,6 +548,15 @@ def train_detr(
         ),
     ] = -1,
     eval_split: Annotated[str, typer.Option("--eval-split")] = "val",
+    augment: Annotated[
+        bool,
+        typer.Option(
+            "--augment/--no-augment",
+            help="Train-time photometric, sensor and crop augmentation. Never "
+            "flips or quarter-turns: a mirrored board is a defect the generator "
+            "guarantees against, and both remap squares.",
+        ),
+    ] = False,
     limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
     device: Annotated[str | None, typer.Option("--device")] = None,
 ) -> None:
@@ -567,6 +576,7 @@ def train_detr(
         repeats=parsed_repeats,
         eval_dataset=eval_dataset,
         eval_split=eval_split,
+        augment=augment,
         model_name=model,
         epochs=epochs,
         batch_size=batch_size,
