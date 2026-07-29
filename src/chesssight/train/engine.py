@@ -64,6 +64,12 @@ class TrainConfig:
     #: the last, which is the real set in a synthetic-plus-real mix.
     eval_dataset: int = -1
     eval_split: str = "val"
+    #: What "best" means. mAP by default, not loss: the DETR loss sums
+    #: classification, L1 and GIoU weighted 1/5/2, so it is dominated by box
+    #: regression while mAP depends on ranking quality the loss barely reflects.
+    #: Measured on one run the two disagreed by 8 mAP points, and selecting on
+    #: loss discarded the better model.
+    select_metric: str = "map"
     eval_every: int = 1
     extra: dict = field(default_factory=dict)
 

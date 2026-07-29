@@ -548,6 +548,14 @@ def train_detr(
         ),
     ] = -1,
     eval_split: Annotated[str, typer.Option("--eval-split")] = "val",
+    select_metric: Annotated[
+        str,
+        typer.Option(
+            "--select-metric",
+            help="Which metric picks the best checkpoint. 'map' by default; "
+            "'val_loss' is available but tracks mAP poorly on DETR-family models.",
+        ),
+    ] = "map",
     augment: Annotated[
         bool,
         typer.Option(
@@ -576,6 +584,7 @@ def train_detr(
         repeats=parsed_repeats,
         eval_dataset=eval_dataset,
         eval_split=eval_split,
+        select_metric=select_metric,
         augment=augment,
         model_name=model,
         epochs=epochs,

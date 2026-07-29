@@ -59,7 +59,8 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
     (config.output_dir / "config.json").write_text(config.to_json(), encoding="utf-8")
 
     history: list[dict] = []
-    best = float("inf")
+    higher_is_better = config.select_metric != "val_loss"
+    best = -float("inf") if higher_is_better else float("inf")
     started = time.monotonic()
 
     for epoch in range(1, config.epochs + 1):
@@ -86,14 +87,26 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
             )
             print(format_report(metrics), flush=True)
 
-            if record["val_loss"] < best:
-                best = record["val_loss"]
+            score = record.get(config.select_metric)
+            if score is None:
+                raise KeyError(
+                    f"select_metric {config.select_metric!r} is not in the "
+                    f"reported metrics: {sorted(record)}"
+                )
+            improved = score > best if higher_is_better else score < best
+            if improved:
+                best = score
                 model.save_pretrained(config.output_dir / "best")
                 processor.save_pretrained(config.output_dir / "best")
                 print(
-                    f"[chesssight] new best, saved to {config.output_dir / 'best'}",
+                    f"[chesssight] new best {config.select_metric}={score:.4f}, "
+                    f"saved to {config.output_dir / 'best'}",
                     flush=True,
                 )
+            # Keep the most recent epoch too, so a run that is stopped early still
+            # leaves something to inspect besides the selected checkpoint.
+            model.save_pretrained(config.output_dir / "last")
+            processor.save_pretrained(config.output_dir / "last")
         else:
             print(f"[chesssight] epoch {epoch}: train {loss:.4f}", flush=True)
 
@@ -110,7 +123,12 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
         f"[chesssight] finished {config.epochs} epochs in {elapsed / 60:.1f} min",
         flush=True,
     )
-    return {"history": history, "best_val_loss": best, "elapsed_seconds": elapsed}
+    return {
+        "history": history,
+        "best_score": best,
+        "select_metric": config.select_metric,
+        "elapsed_seconds": elapsed,
+    }
 
 
 def load_trained(path: Path, device: str | None = None):
