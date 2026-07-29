@@ -10,6 +10,7 @@ from PIL import Image
 from chesssight.data.dataset import DatasetReader, DatasetWriter
 from chesssight.data.export import (
     SEMANTIC_LABELS,
+    board_bbox,
     mask_area_check,
     write_coco,
     write_masks,
@@ -183,8 +184,35 @@ class TestCoco:
 
         assert result["images"] == 3
         assert {"images", "annotations", "categories", "info"} <= set(document)
-        assert len(document["categories"]) == NUM_CLASSES - 1
+        # 12 piece classes plus the board, which is emitted as one more category so
+        # a detector can localise the playing surface in the same forward pass.
+        assert len(document["categories"]) == NUM_CLASSES
         assert document["categories"][0]["name"] == "white_pawn"
+        assert document["categories"][-1]["name"] == "board"
+
+    def test_the_board_can_be_left_out(self, run_dir: Path):
+        write_coco(DatasetReader(run_dir), run_dir / "coco.json", include_board=False)
+        document = json.loads((run_dir / "coco.json").read_text())
+        assert all(c["name"] != "board" for c in document["categories"])
+        assert all(a["category_id"] != BOARD_LABEL for a in document["annotations"])
+
+    def test_the_board_box_wraps_the_corners(self, run_dir: Path):
+        sample = DatasetReader(run_dir).load("000000")
+        box = board_bbox(sample)
+        assert box is not None
+        corners = sample.board.corners_px
+        # Clipped to the image, since real boards are routinely cropped by the frame.
+        assert box.x >= 0 and box.y >= 0
+        assert box.x + box.width <= sample.width
+        assert box.y + box.height <= sample.height
+        inside = [
+            c
+            for c in corners
+            if 0 <= c[0] <= sample.width and 0 <= c[1] <= sample.height
+        ]
+        for x, y in inside:
+            assert box.x - 0.5 <= x <= box.x + box.width + 0.5
+            assert box.y - 0.5 <= y <= box.y + box.height + 0.5
 
     def test_annotations_use_the_modal_box(self, run_dir: Path):
         write_coco(DatasetReader(run_dir), run_dir / "coco.json")
@@ -246,7 +274,9 @@ class TestCoco:
         payload["pieces"][0]["visible"] = False
         writer.add(Sample.model_validate(payload))
 
-        write_coco(DatasetReader(writer.root), tmp_path / "coco.json")
+        write_coco(
+            DatasetReader(writer.root), tmp_path / "coco.json", include_board=False
+        )
         document = json.loads((tmp_path / "coco.json").read_text())
         assert len(document["annotations"]) == len(sample.pieces) - 1
 

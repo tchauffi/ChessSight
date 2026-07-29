@@ -488,3 +488,84 @@ def data_coco(
         f"wrote {result['annotations']} annotations over {result['images']} "
         f"images to {target}"
     )
+
+
+train_app = typer.Typer(
+    help="Fine-tune a detector on a generated dataset.", no_args_is_help=True
+)
+app.add_typer(train_app, name="train")
+
+
+@train_app.command("detr")
+def train_detr(
+    data: Annotated[Path, typer.Argument(help="Run directory to train on.")],
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Where to save checkpoints.")
+    ],
+    model: Annotated[str, typer.Option("--model", help="Pretrained checkpoint.")] = (
+        "PekingU/rtdetr_r50vd_coco_o365"
+    ),
+    epochs: Annotated[int, typer.Option("--epochs", "-e")] = 20,
+    batch_size: Annotated[int, typer.Option("--batch-size", "-b")] = 8,
+    lr: Annotated[float, typer.Option("--lr")] = 1e-4,
+    backbone_lr: Annotated[float, typer.Option("--backbone-lr")] = 1e-5,
+    image_size: Annotated[int, typer.Option("--image-size")] = 640,
+    workers: Annotated[int, typer.Option("--workers", "-w")] = 4,
+    val_fraction: Annotated[float, typer.Option("--val-fraction")] = 0.1,
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Fine-tune an RT-DETR detector to find the board and the pieces.
+
+    RT-DETR rather than plain DETR: same family, but redesigned to converge in
+    tens of epochs rather than hundreds. Pass `--model facebook/detr-resnet-50`
+    for the original if you want to compare.
+    """
+    from chesssight.train.engine import TrainConfig
+    from chesssight.train.run import train as run_training
+
+    config = TrainConfig(
+        data_root=Path(data),
+        output_dir=Path(out),
+        model_name=model,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=lr,
+        backbone_learning_rate=backbone_lr,
+        image_size=image_size,
+        num_workers=workers,
+        val_fraction=val_fraction,
+        limit=limit,
+    )
+    run_training(config, device=device)
+
+
+@train_app.command("evaluate")
+def train_evaluate(
+    checkpoint: Annotated[Path, typer.Argument(help="Saved checkpoint directory.")],
+    data: Annotated[Path, typer.Option("--data", help="Run directory to evaluate on.")],
+    split: Annotated[str, typer.Option("--split")] = "val",
+    batch_size: Annotated[int, typer.Option("--batch-size", "-b")] = 8,
+    val_fraction: Annotated[float, typer.Option("--val-fraction")] = 0.1,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Report mAP for a saved checkpoint, overall and per class."""
+    from torch.utils.data import DataLoader
+
+    from chesssight.train.dataset import ChessDetectionDataset, SplitSpec, collate
+    from chesssight.train.evaluate import evaluate as run_eval
+    from chesssight.train.evaluate import format_report
+    from chesssight.train.run import load_trained
+
+    model, processor, resolved = load_trained(Path(checkpoint), device)
+    dataset = ChessDetectionDataset(
+        Path(data),
+        processor,
+        split=split,
+        split_spec=SplitSpec(val_fraction=val_fraction),
+    )
+    loader = DataLoader(
+        dataset, batch_size=batch_size, collate_fn=collate, num_workers=2
+    )
+    typer.echo(f"evaluating {len(dataset)} samples from split {split!r}")
+    typer.echo(format_report(run_eval(model, loader, processor, resolved)))

@@ -27,7 +27,7 @@ from chesssight.data.masks import (
     rle_decode,
     semantic_mask,
 )
-from chesssight.data.schema import Sample
+from chesssight.data.schema import BoundingBox, Sample
 
 SEMANTIC_DIRNAME = "semantic"
 INSTANCE_DIRNAME = "instance"
@@ -121,11 +121,30 @@ def _rle_to_coco(counts: list[int], height: int, width: int) -> dict:
     return {"size": [height, width], "counts": [int(run) for run in runs]}
 
 
+def board_bbox(sample: Sample) -> BoundingBox | None:
+    """Axis-aligned box around the board, clipped to the image.
+
+    Derived from the four corner labels rather than a mask, so it is exact and
+    works for annotated real photographs too. Boards are routinely cropped by the
+    frame, hence the clipping -- an unclipped box would teach a detector to
+    predict coordinates outside the image.
+    """
+    corners = np.asarray(sample.board.corners_px, dtype=np.float64)
+    x0 = max(0.0, float(corners[:, 0].min()))
+    y0 = max(0.0, float(corners[:, 1].min()))
+    x1 = min(float(sample.width), float(corners[:, 0].max()))
+    y1 = min(float(sample.height), float(corners[:, 1].max()))
+    if x1 - x0 <= 1.0 or y1 - y0 <= 1.0:
+        return None
+    return BoundingBox(x=x0, y=y0, width=x1 - x0, height=y1 - y0)
+
+
 def write_coco(
     reader: DatasetReader,
     out_path: Path,
     *,
     with_masks: bool = True,
+    include_board: bool = True,
     limit: int | None = None,
 ) -> dict[str, int]:
     """Write a COCO instance-segmentation JSON.
@@ -133,6 +152,9 @@ def write_coco(
     Only ``visible`` pieces become annotations, and the box used is the *modal* one
     measured from the mask. A detector trained on amodal boxes learns to predict
     pieces it cannot see.
+
+    The board is emitted as one more category, so a detector can localise the
+    playing surface in the same forward pass it finds the pieces in.
     """
     images: list[dict] = []
     annotations: list[dict] = []
@@ -171,14 +193,35 @@ def write_coco(
             annotations.append(annotation)
             annotation_id += 1
 
+        if include_board:
+            box = board_bbox(sample)
+            if box is not None:
+                annotations.append(
+                    {
+                        "id": annotation_id,
+                        "image_id": image_id,
+                        "category_id": BOARD_LABEL,
+                        "bbox": [box.x, box.y, box.width, box.height],
+                        "area": float(box.width * box.height),
+                        "iscrowd": 0,
+                    }
+                )
+                annotation_id += 1
+
+    categories = [
+        {"id": class_id, "name": CLASS_NAMES[class_id], "supercategory": "piece"}
+        for class_id in range(1, NUM_CLASSES)
+    ]
+    if include_board:
+        categories.append(
+            {"id": BOARD_LABEL, "name": "board", "supercategory": "board"}
+        )
+
     document = {
         "info": {"description": "ChessSight synthetic chess pieces"},
         "images": images,
         "annotations": annotations,
-        "categories": [
-            {"id": class_id, "name": CLASS_NAMES[class_id], "supercategory": "piece"}
-            for class_id in range(1, NUM_CLASSES)
-        ],
+        "categories": categories,
     }
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
