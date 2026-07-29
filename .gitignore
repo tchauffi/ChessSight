@@ -172,3 +172,21 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# ChessSight datasets and assets -- large, regenerable, never committed.
+datasets/
+out/
+*.hdr
+*.exr
+*.blend1
+
+# Chess-piece models. The source STLs are hundreds of megabytes and the baked OBJs
+# are regenerable with `chesssight assets bake`, so neither belongs in git -- but the
+# manifests do: they are small, hand-authored, and record each set's licence.
+assets/**/*.stl
+assets/**/*.obj
+assets/**/*.mtl
+assets/**/*.glb
+assets/**/*.gltf
+assets/**/*.fbx
+assets/**/*.dae

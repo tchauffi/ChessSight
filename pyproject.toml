@@ -7,7 +7,18 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
-dependencies = []
+dependencies = [
+    "numpy>=2.0,<3.0",
+    "pillow>=11.0,<13.0",
+    "chess>=1.11,<2.0",
+    "typer>=0.15,<1.0",
+    "pydantic>=2.9,<3.0",
+    "pyyaml>=6.0,<7.0",
+    "zstandard>=0.23,<1.0",
+]
+
+[project.scripts]
+chesssight = "chesssight.cli:app"
 
 [dependency-groups]
 dev = [
@@ -16,11 +27,14 @@ dev = [
     "mypy>=1.15.0,<2.0.0",
     "black>=25.1.0,<26.0.0",
     "pytest>=8.3.0,<9.0.0",
+    "types-PyYAML>=6.0,<7.0",
 ]
 
 [tool.ruff]
 line-length = 88  # Match black's default line length
 target-version = "py312"
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -30,6 +44,22 @@ select = [
     "B",  # flake8-bugbear
 ]
 ignore = []
+
+[tool.mypy]
+python_version = "3.12"
+# The `chesssight.blender` package runs inside Blender's own bundled Python and
+# imports `bpy`, which does not exist in this venv or in CI.
+exclude = ["^src/chesssight/blender/"]
+
+[[tool.mypy.overrides]]
+module = ["chesssight.blender.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "blender: integration tests that require a `blender` executable on PATH",
+]
 
 [tool.ruff.format]
 quote-style = "double"
