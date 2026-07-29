@@ -1,0 +1,31 @@
+{
+  "name": "uppachess-staunton",
+  "source": "https://www.printables.com/model/76438-staunton-chess-set",
+  "license": "CC BY-NC 4.0",
+  "attribution": "Staunton Chess Set by uppalong (Printables model 76438)",
+  "forward_axis": "+Y",
+  "up_axis": "+Z",
+  "scale_mode": "uniform",
+  "king_height": 1.93,
+  "pieces": {
+    "P": {
+      "file": "pawn.obj"
+    },
+    "N": {
+      "file": "knight.obj"
+    },
+    "B": {
+      "file": "bishop.obj"
+    },
+    "R": {
+      "file": "rook.obj"
+    },
+    "Q": {
+      "file": "queen.obj"
+    },
+    "K": {
+      "file": "king.obj"
+    }
+  },
+  "baked_from": "assets/manifest.json"
+}
