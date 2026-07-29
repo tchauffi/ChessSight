@@ -1,0 +1,75 @@
+# Baseline configuration for a full synthetic training set.
+#
+# Engine notes:
+#   BLENDER_EEVEE  ~0.2 s/image  - use this while iterating.
+#   CYCLES         ~1-3 s/image  - use this for the final dataset; it needs OPTIX,
+#                                  and no more than 2 workers since they share one GPU.
+count: 50000
+master_seed: 20260729
+
+render:
+  engine: CYCLES
+  samples: 96
+  resolution: [512, 512]
+  use_gpu: true
+  compute_device_type: OPTIX
+  denoise: true
+  image_format: JPEG
+  jpeg_quality: 92
+  render_id_pass: true
+
+camera:
+  # Elevation reaches down to 18 degrees so the set includes the low, oblique
+  # angles that hand-held phone photographs are actually taken from.
+  azimuth_deg: {min: 0.0, max: 360.0}
+  elevation_deg: {min: 18.0, max: 75.0}
+  distance: {min: 11.0, max: 20.0}
+  roll_deg: {min: -6.0, max: 6.0}
+  focal_mm: {min: 24.0, max: 85.0}
+  sensor_width_mm: 36.0
+  target_jitter: {min: -1.2, max: 1.2}
+  dof_probability: 0.35
+  f_stop: {min: 1.8, max: 11.0}
+
+lighting:
+  # Point hdri_dir at a directory of .hdr/.exr files to enable image-based lighting.
+  # Without it the procedural sun-plus-fills setup is used, so the pipeline works
+  # with no external assets.
+  hdri_dir: null
+  hdri_probability: 0.5
+  world_strength: {min: 0.3, max: 2.5}
+  world_color_temperature: {min: 3200.0, max: 7500.0}
+  sun_energy: {min: 1.0, max: 6.0}
+  sun_angle_deg: {min: 0.5, max: 8.0}
+  sun_elevation_deg: {min: 25.0, max: 85.0}
+  lamp_count: {min: 0, max: 2}
+  lamp_energy: {min: 1500.0, max: 12000.0}
+
+pieces:
+  provider: procedural
+  height_scale: {min: 0.85, max: 1.15}
+  radius_scale: {min: 0.85, max: 1.15}
+  lathe_segments: {min: 16, max: 48}
+  position_jitter: {min: -0.16, max: 0.16}
+  tipped_probability: 0.02
+
+scene:
+  distractor_probability: 0.3
+  distractor_count: {min: 0, max: 3}
+
+positions:
+  # Point pgn_paths at Lichess dumps (.pgn or .pgn.zst) for realistic positions.
+  # The random component stays non-zero on purpose: real games are dominated by
+  # near-starting positions, and a purely game-derived set lets the model lean on
+  # chess priors instead of reading pixels.
+  pgn_paths: []
+  max_games: 5000
+  plies_per_game: 3
+  skip_opening_plies: 6
+  weight_pgn: 0.8
+  weight_random: 0.2
+
+output:
+  root: ~/datasets/chesssight
+  run_name: v1
+  split: train

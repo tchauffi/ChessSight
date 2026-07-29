@@ -1,0 +1,21 @@
+# Tiny, fast config for checking that a change did what you expected.
+# Renders in a few seconds on EEVEE.
+count: 8
+master_seed: 20260729
+
+render:
+  engine: BLENDER_EEVEE
+  samples: 16
+  resolution: [384, 288]
+  image_format: PNG
+  render_id_pass: true
+
+positions:
+  pgn_paths: []
+  weight_pgn: 0.0
+  weight_random: 1.0
+
+output:
+  root: ~/datasets/chesssight
+  run_name: smoke
+  split: train
