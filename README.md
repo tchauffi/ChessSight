@@ -6,12 +6,12 @@ ChessSight is a computer vision project designed to identify and classify chess 
 
 Before installing, make sure you have:
 - Python 3.12 or higher
-- Poetry (Python package manager)
+- uv (Python package manager)
 - Make
 
 On macOS, you can install these using Homebrew:
 ```bash
-brew install python@3.12 poetry make
+brew install python@3.12 uv make
 ```
 
 ## Installation

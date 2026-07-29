@@ -10,22 +10,22 @@ help:
 	@echo "clean      - Remove cache files"
 
 install:
-	poetry install
-	poetry run pre-commit install
+	uv sync
+	uv run pre-commit install
 
 format:
-	poetry run black .
-	poetry run ruff check --fix .
+	uv run black .
+	uv run ruff check --fix .
 
 lint:
-	poetry run ruff check .
-	poetry run mypy .
+	uv run ruff check .
+	uv run mypy .
 
 test:
-	poetry run pytest
+	uv run pytest
 
 pre-commit:
-	poetry run pre-commit run --all-files
+	uv run pre-commit run --all-files
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
