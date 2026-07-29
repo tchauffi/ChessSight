@@ -140,6 +140,35 @@ Sources with clear per-model licences: [Poly Pizza](https://poly.pizza),
 [Printables](https://www.printables.com/model/76438-staunton-chess-set) for printable
 Staunton sets (STL imports fine). None of this is legal advice.
 
+### Training a detector
+
+```bash
+uv sync --extra train                       # torch is ~3 GB, so it is opt-in
+uv run chesssight train detr <run> -o runs/rtdetr --epochs 20
+uv run chesssight train evaluate runs/rtdetr/best --data <run>
+```
+
+Fine-tunes **RT-DETR** to find the board and all twelve piece types in one pass.
+RT-DETR rather than plain DETR: the two are the same family, but DETR's slow
+convergence comes from one-to-one Hungarian matching over dense attention, and it
+bites hardest on small objects — which here is every piece on a board seen from
+across the table. Pass `--model facebook/detr-resnet-50` to compare against the
+original.
+
+The board is the 13th class, boxed from the four corner labels and clipped to the
+image. Piece targets are the *modal* boxes measured from the masks; training on the
+amodal boxes would teach the detector to predict pieces it cannot see.
+
+The train/val split hashes the sample id rather than slicing the index, so it
+survives the dataset being regenerated at a different size and cannot put a
+correlated block of seeds on one side. mAP is reported per class as well as
+overall — a single averaged figure hides the thing that matters, since the board is
+one enormous easy box and the pieces are dozens of small ones.
+
+On an RTX 50-series card, note that torch and torchvision come from the CUDA 12.8
+index (configured in `pyproject.toml`): Blackwell is `sm_120` and the default PyPI
+wheels carry no kernels for it.
+
 ### Reproducibility
 
 One master seed; every sample and every randomised aspect derives its own seed by
