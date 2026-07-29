@@ -98,9 +98,12 @@ class ChessDetectionDataset(Dataset):
         split_spec: SplitSpec | None = None,
         include_board: bool = True,
         limit: int | None = None,
+        split_source: str = "auto",
     ) -> None:
-        if split not in ("train", "val", "all"):
-            raise ValueError(f"split must be train, val or all; got {split!r}")
+        if split not in ("train", "val", "test", "all"):
+            raise ValueError(f"split must be train, val, test or all; got {split!r}")
+        if split_source not in ("auto", "stored", "hash"):
+            raise ValueError("split_source must be auto, stored or hash")
 
         self.root = Path(root)
         self.processor = processor
@@ -109,11 +112,33 @@ class ChessDetectionDataset(Dataset):
 
         reader = DatasetReader(self.root)
         spec = split_spec or SplitSpec()
-        entries = [
-            entry
-            for entry in reader.entries()
-            if split == "all" or spec.is_val(entry.id) == (split == "val")
-        ]
+        all_entries = reader.entries()
+
+        # A dataset that carries its own division is respected. ChessReD splits by
+        # *game* -- images from one game share a board, a room and a camera -- so
+        # re-splitting it by hash would leak all three across the boundary and
+        # flatter every number measured against it. A synthetic run has no such
+        # structure and stores one split for everything, so it gets hashed.
+        stored = {entry.split for entry in all_entries}
+        if split_source == "auto":
+            split_source = "stored" if len(stored) > 1 else "hash"
+        self.split_source = split_source
+
+        if split_source == "stored":
+            entries = [
+                entry for entry in all_entries if split == "all" or entry.split == split
+            ]
+        else:
+            if split == "test":
+                raise ValueError(
+                    "this dataset stores a single split, so there is no separate "
+                    "test set to hash out; use 'val' or pass split_source='stored'"
+                )
+            entries = [
+                entry
+                for entry in all_entries
+                if split == "all" or spec.is_val(entry.id) == (split == "val")
+            ]
         if limit is not None:
             entries = entries[:limit]
         if not entries:
