@@ -136,8 +136,14 @@ def predict_sample(
     device: torch.device,
     *,
     threshold: float = 0.5,
+    calibration=None,
 ) -> list[dict]:
-    """Detections for one dataset entry, in original image pixels."""
+    """Detections for one dataset entry, in original image pixels.
+
+    With a ``Calibration``, scores are remapped before the threshold is applied,
+    and the raw score is kept alongside. Calibration is monotone, so the ordering
+    of detections is identical either way.
+    """
     from PIL import Image
 
     sample = dataset.sample(index)
@@ -147,10 +153,10 @@ def predict_sample(
     outputs = model(**inputs)
     sizes = torch.tensor([[image.height, image.width]], device=device)
     result = processor.post_process_object_detection(
-        outputs, target_sizes=sizes, threshold=threshold
+        outputs, target_sizes=sizes, threshold=0.0 if calibration else threshold
     )[0]
 
-    return [
+    detections = [
         {
             "label": DETECTION_LABELS[int(label)],
             "score": float(score),
@@ -163,6 +169,18 @@ def predict_sample(
             strict=True,
         )
     ]
+    if calibration is None:
+        return detections
+
+    kept = []
+    for detection in detections:
+        raw = float(detection["score"])  # type: ignore[arg-type]
+        detection["raw_score"] = raw
+        calibrated = calibration.apply_one(raw)
+        detection["score"] = calibrated
+        if calibrated >= threshold:
+            kept.append(detection)
+    return kept
 
 
 def _board_box(sample) -> list[float] | None:

@@ -556,6 +556,15 @@ def train_detr(
             "'val_loss' is available but tracks mAP poorly on DETR-family models.",
         ),
     ] = "map",
+    cls_weight: Annotated[
+        float | None,
+        typer.Option(
+            "--cls-weight",
+            help="Multiplier on the classification loss. The stock 1.0 is dwarfed "
+            "by the 5+2 box terms, which is why short fine-tunes rank well but "
+            "score everything under 0.1. Try 3.0.",
+        ),
+    ] = None,
     augment: Annotated[
         bool,
         typer.Option(
@@ -585,6 +594,7 @@ def train_detr(
         eval_dataset=eval_dataset,
         eval_split=eval_split,
         select_metric=select_metric,
+        cls_loss_weight=cls_weight,
         augment=augment,
         model_name=model,
         epochs=epochs,
@@ -667,6 +677,26 @@ def data_ingest_chessred(
     )
     typer.echo(f"ingested {result['written']} samples, skipped {result['skipped']}")
     typer.echo(f"  -> {out}")
+
+
+def _load_calibration(checkpoint: Path, threshold: float, top_k: int | None):
+    """Attach a saved calibration, letting its fitted threshold be the default.
+
+    With calibration the absolute scores mean something, so thresholding takes
+    over from ranking; an explicit ``--top-k`` keeps ranking behaviour instead.
+    """
+    from chesssight.train.calibrate import Calibration
+
+    calibration = Calibration.load(checkpoint)
+    if calibration is None or top_k is not None:
+        return calibration if top_k is None else None, threshold
+    if threshold <= 0:
+        threshold = calibration.threshold
+    typer.echo(
+        f"calibration: applied (fit on {calibration.fit_split!r}, "
+        f"threshold {threshold:.2f}, F1 there {calibration.f1:.3f})"
+    )
+    return calibration, threshold
 
 
 @train_app.command("predict")
@@ -760,6 +790,7 @@ def train_predict(
     typer.echo(f"{len(entries)} samples in split {split!r} ({source} splits)")
 
     model, processor, resolved = load_trained(Path(checkpoint), device)
+    calibration, threshold = _load_calibration(Path(checkpoint), threshold, top_k)
     step = max(1, len(entries) // count)
     chosen = entries[::step][:count]
 
@@ -783,14 +814,24 @@ def train_predict(
     for entry in chosen:
         sample = reader.load(entry.id)
         image = Image.open(reader.root / sample.image).convert("RGB")
-        # Rank rather than threshold: a partly-trained DETR orders boxes well long
-        # before its scores are confident, so a fixed threshold shows an empty
-        # image and hides a model that works.
-        predictions = predict(model, processor, image, resolved, threshold=threshold)
+        predictions = predict(
+            model,
+            processor,
+            image,
+            resolved,
+            threshold=threshold,
+            calibration=calibration,
+        )
         if on_board:
             predictions = on_board_only(predictions, sample)
-        k = top_k if top_k else sum(1 for p in sample.pieces if p.bbox)
-        predictions = take_top(predictions, k)
+        if calibration is None:
+            # Without calibration, rank rather than threshold: a partly-trained
+            # DETR orders boxes well long before its scores are confident, so a
+            # fixed threshold shows an empty image and hides a model that works.
+            k = top_k if top_k else sum(1 for p in sample.pieces if p.bbox)
+            predictions = take_top(predictions, k)
+        elif top_k:
+            predictions = take_top(predictions, top_k)
         accuracy = square_accuracy(sample, predictions)
         accuracies.append(accuracy)
         n_predicted = sum(1 for p in predictions if p["name"] != "board")
@@ -818,4 +859,51 @@ def train_predict(
     typer.echo(
         f"  mean occupied-square accuracy over {len(chosen)} images: "
         f"{mean_occupied:.1%}"
+    )
+
+
+@train_app.command("calibrate")
+def train_calibrate(
+    checkpoint: Annotated[Path, typer.Argument(help="Saved checkpoint directory.")],
+    data: Annotated[
+        Path,
+        typer.Option(
+            "--data",
+            help="Run directory whose val split the fit uses. Use the real set: "
+            "calibrating on renders would tune the scores for the wrong domain.",
+        ),
+    ],
+    split: Annotated[str, typer.Option("--split")] = "val",
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Fit Platt scaling so the detector's scores mean something.
+
+    A short DETR-family fine-tune ranks boxes well while scoring everything
+    under 0.1 -- this checkpoint's mAP was 0.85 with no score above 0.07. The fit
+    is monotone, so mAP is untouched; it only remaps the numbers and picks an
+    operating threshold. Saved into the checkpoint and applied by `train predict`
+    automatically.
+    """
+    from chesssight.train.calibrate import calibrate
+    from chesssight.train.dataset import ChessDetectionDataset
+    from chesssight.train.run import load_trained
+
+    model, processor, resolved = load_trained(Path(checkpoint), device)
+    dataset = ChessDetectionDataset(
+        Path(data), processor, split=split, split_source="auto"
+    )
+    typer.echo(f"fitting on {len(dataset)} samples from split {split!r}")
+
+    result = calibrate(
+        model, processor, dataset, resolved, fit_split=split, limit=limit
+    )
+    path = result.save(Path(checkpoint))
+
+    typer.echo(f"wrote {path}")
+    typer.echo(f"  scale {result.scale:.3f}  bias {result.bias:.3f}")
+    typer.echo(
+        f"  operating threshold {result.threshold:.3f} -> "
+        f"precision {result.precision:.3f}  recall {result.recall:.3f}  "
+        f"F1 {result.f1:.3f}  ({result.detections_used} detections used)"
     )

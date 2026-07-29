@@ -70,6 +70,12 @@ class TrainConfig:
     #: Measured on one run the two disagreed by 8 mAP points, and selecting on
     #: loss discarded the better model.
     select_metric: str = "map"
+    #: Multiplier on RT-DETR's classification (varifocal) loss. The stock 1.0 is
+    #: dwarfed by the 5.0 L1 + 2.0 GIoU box terms, which is a large part of why a
+    #: short fine-tune ranks well but scores everything under 0.1: the box branch
+    #: gets most of the gradient and the class logits never grow. None keeps the
+    #: stock weight.
+    cls_loss_weight: float | None = None
     eval_every: int = 1
     extra: dict = field(default_factory=dict)
 
@@ -86,18 +92,24 @@ def resolve_device(explicit: str | None = None) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def build_model(model_name: str = DEFAULT_MODEL):
+def build_model(
+    model_name: str = DEFAULT_MODEL, *, cls_loss_weight: float | None = None
+):
     """Load a pretrained detector and swap in a 13-class head.
 
     ``ignore_mismatched_sizes`` is what allows the COCO 80-class head to be
     replaced; without it the load fails rather than reinitialising.
     """
+    overrides = {}
+    if cls_loss_weight is not None:
+        overrides["weight_loss_vfl"] = cls_loss_weight
     return AutoModelForObjectDetection.from_pretrained(
         model_name,
         num_labels=NUM_DETECTION_LABELS,
         id2label=ID2LABEL,
         label2id=LABEL2ID,
         ignore_mismatched_sizes=True,
+        **overrides,
     )
 
 

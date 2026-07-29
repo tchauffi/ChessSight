@@ -33,20 +33,26 @@ def predict(
     *,
     threshold: float = DEFAULT_THRESHOLD,
     top_k: int | None = None,
+    calibration=None,
 ) -> list[dict]:
     """Detections for one PIL image, in that image's own pixel coordinates.
 
     ``top_k`` takes the highest-scoring detections regardless of threshold. This is
     not a convenience: a partly-trained DETR ranks boxes well long before its
     classification head produces confident scores, so a fixed threshold shows an
-    empty image and hides a model that is actually working. Absolute scores only
-    become meaningful late in training.
+    empty image and hides a model that is actually working.
+
+    ``calibration`` is the finished version of the same idea: a Platt fit saved
+    next to the checkpoint remaps the scores so a normal threshold works. It is
+    monotone, so top-k selection is unaffected by applying it.
     """
     inputs = processor(images=image, return_tensors="pt").to(device)
     outputs = model(**inputs)
     sizes = torch.tensor([[image.height, image.width]], device=device)
     result = processor.post_process_object_detection(
-        outputs, target_sizes=sizes, threshold=0.0 if top_k else threshold
+        outputs,
+        target_sizes=sizes,
+        threshold=0.0 if (top_k or calibration) else threshold,
     )[0]
 
     detections = [
@@ -63,6 +69,16 @@ def predict(
             strict=True,
         )
     ]
+
+    if calibration is not None:
+        for detection in detections:
+            raw = float(detection["score"])  # type: ignore[arg-type]
+            detection["raw_score"] = raw
+            detection["score"] = calibration.apply_one(raw)
+        if not top_k:
+            detections = [
+                d for d in detections if float(d["score"]) >= threshold  # type: ignore[arg-type]
+            ]
 
     if top_k:
         detections.sort(key=lambda d: float(d["score"]), reverse=True)  # type: ignore[arg-type]

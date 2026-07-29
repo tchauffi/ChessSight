@@ -146,6 +146,7 @@ Staunton sets (STL imports fine). None of this is legal advice.
 uv sync --extra train                       # torch is ~3 GB, so it is opt-in
 uv run chesssight train detr <run> -o runs/rtdetr --epochs 20
 uv run chesssight train evaluate runs/rtdetr/best --data <run>
+uv run chesssight train calibrate runs/rtdetr/best --data <real-run>   # then predict uses real thresholds
 ```
 
 Fine-tunes **RT-DETR** to find the board and all twelve piece types in one pass.
@@ -158,6 +159,14 @@ original.
 The board is the 13th class, boxed from the four corner labels and clipped to the
 image. Piece targets are the *modal* boxes measured from the masks; training on the
 amodal boxes would teach the detector to predict pieces it cannot see.
+
+A short DETR-family fine-tune ranks boxes well while scoring everything under
+0.1 — the classification loss is dwarfed by the box terms, and varifocal logits
+grow over many more epochs than a fine-tune runs. `train calibrate` fits Platt
+scaling on a real val split: monotone, so mAP is untouched, but scores become
+honest probabilities (measured ECE 0.03) and a normal threshold works. The fit
+is saved into the checkpoint and applied by `train predict` automatically. For
+training-time mitigation, `--cls-weight 3` raises the classification loss weight.
 
 The train/val split hashes the sample id rather than slicing the index, so it
 survives the dataset being regenerated at a different size and cannot put a
