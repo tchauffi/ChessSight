@@ -76,6 +76,16 @@ class TrainConfig:
     #: gets most of the gradient and the class logits never grow. None keeps the
     #: stock weight.
     cls_loss_weight: float | None = None
+    #: Keep an exponential moving average of the weights and evaluate/save *that*,
+    #: as the reference RT-DETR training does. The averaged model is what smooths
+    #: out the step-to-step noise of a small-batch fine-tune; the official recipe
+    #: credits it with a steady fraction of a point of mAP and much steadier logits.
+    ema: bool = True
+    ema_decay: float = 0.9999
+    #: The ramp below means early steps average aggressively (the raw weights are
+    #: still mostly the random init, not worth preserving) and the full decay only
+    #: applies once training has found its footing.
+    ema_warmup_steps: int = 2000
     eval_every: int = 1
     extra: dict = field(default_factory=dict)
 
@@ -120,6 +130,47 @@ def build_processor(model_name: str = DEFAULT_MODEL, image_size: int = 640):
         do_pad=True,
         use_fast=True,
     )
+
+
+class ModelEma:
+    """Exponential moving average of a model's parameters.
+
+    The averaged copy never sees a gradient; it trails the live weights with
+    ``decay`` mixed per update. ``decay`` itself ramps in over ``warmup_steps`` as
+    ``decay * (1 - exp(-updates / warmup_steps))`` -- the same schedule as the
+    reference implementation -- so the average forgets the earliest, still-random
+    steps quickly instead of carrying them for the whole run.
+
+    Buffers (batch-norm statistics and the like) are copied outright rather than
+    averaged: an average of integer counters is not a meaningful state.
+    """
+
+    def __init__(self, model, *, decay: float = 0.9999, warmup_steps: int = 2000):
+        import copy
+
+        self.module = copy.deepcopy(model).eval()
+        for parameter in self.module.parameters():
+            parameter.requires_grad_(False)
+        self.decay = decay
+        self.warmup_steps = warmup_steps
+        self.updates = 0
+
+    def current_decay(self) -> float:
+        if self.warmup_steps <= 0:
+            return self.decay
+        return self.decay * (1.0 - math.exp(-self.updates / self.warmup_steps))
+
+    @torch.no_grad()
+    def update(self, model) -> None:
+        self.updates += 1
+        decay = self.current_decay()
+        ema_state = self.module.state_dict()
+        for key, value in model.state_dict().items():
+            target = ema_state[key]
+            if value.dtype.is_floating_point:
+                target.mul_(decay).add_(value.detach(), alpha=1.0 - decay)
+            else:
+                target.copy_(value)
 
 
 def parameter_groups(model, config: TrainConfig) -> list[dict]:
@@ -223,6 +274,7 @@ def train_one_epoch(
     config: TrainConfig,
     *,
     epoch: int,
+    ema: ModelEma | None = None,
     log_every: int = 50,
 ) -> float:
     model.train()
@@ -248,6 +300,8 @@ def train_one_epoch(
         scaler.step(optimizer)
         scaler.update()
         scheduler.step()
+        if ema is not None:
+            ema.update(model)
 
         running += loss.item()
         seen += 1

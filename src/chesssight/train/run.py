@@ -10,6 +10,7 @@ import torch
 
 from chesssight.train.dataset import SplitSpec, describe_split
 from chesssight.train.engine import (
+    ModelEma,
     TrainConfig,
     build_loaders,
     build_model,
@@ -66,6 +67,20 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
         flush=True,
     )
 
+    # The EMA copy is what gets evaluated and saved, matching the reference
+    # recipe: checkpoint selection then measures the averaged weights actually
+    # being shipped, not the noisier live ones.
+    ema = None
+    if config.ema:
+        ema = ModelEma(
+            model, decay=config.ema_decay, warmup_steps=config.ema_warmup_steps
+        )
+        print(
+            f"[chesssight] EMA on: decay {config.ema_decay}, "
+            f"warmup {config.ema_warmup_steps} steps",
+            flush=True,
+        )
+
     optimizer = torch.optim.AdamW(
         parameter_groups(model, config), weight_decay=config.weight_decay
     )
@@ -93,13 +108,17 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
             resolved,
             config,
             epoch=epoch,
+            ema=ema,
         )
         record = {"epoch": epoch, "train_loss": loss}
+        # Everything from here down -- validation, selection, saving -- sees the
+        # averaged weights when EMA is on.
+        scored = ema.module if ema is not None else model
 
         if epoch % config.eval_every == 0 or epoch == config.epochs:
-            record["val_loss"] = validation_loss(model, val_loader, resolved, config)
+            record["val_loss"] = validation_loss(scored, val_loader, resolved, config)
             metrics = evaluate_samples(
-                model,
+                scored,
                 processor,
                 eval_reader,
                 resolved,
@@ -124,7 +143,7 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
             improved = score > best if higher_is_better else score < best
             if improved:
                 best = score
-                model.save_pretrained(config.output_dir / "best")
+                scored.save_pretrained(config.output_dir / "best")
                 processor.save_pretrained(config.output_dir / "best")
                 print(
                     f"[chesssight] new best {config.select_metric}={score:.4f}, "
@@ -133,7 +152,7 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
                 )
             # Keep the most recent epoch too, so a run that is stopped early still
             # leaves something to inspect besides the selected checkpoint.
-            model.save_pretrained(config.output_dir / "last")
+            scored.save_pretrained(config.output_dir / "last")
             processor.save_pretrained(config.output_dir / "last")
         else:
             print(f"[chesssight] epoch {epoch}: train {loss:.4f}", flush=True)
@@ -143,7 +162,9 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
             json.dumps(history, indent=2), encoding="utf-8"
         )
 
-    model.save_pretrained(config.output_dir / "last")
+    (ema.module if ema is not None else model).save_pretrained(
+        config.output_dir / "last"
+    )
     processor.save_pretrained(config.output_dir / "last")
 
     elapsed = time.monotonic() - started

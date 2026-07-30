@@ -10,7 +10,10 @@ master_seed: 20260729
 render:
   engine: CYCLES
   samples: 96
-  resolution: [512, 512]
+  # 640 matches the resolution RT-DETR is pretrained at, and puts ~56% more pixels
+  # on each piece -- aimed squarely at the small-object gap (mAP small 0.50 vs
+  # large 0.93 measured on the 512 dataset). Render cost scales with pixel count.
+  resolution: [640, 640]
   use_gpu: true
   compute_device_type: OPTIX
   denoise: true

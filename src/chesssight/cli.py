@@ -574,6 +574,14 @@ def train_detr(
             "guarantees against, and both remap squares.",
         ),
     ] = False,
+    ema: Annotated[
+        bool,
+        typer.Option(
+            "--ema/--no-ema",
+            help="Evaluate and save an exponential moving average of the weights "
+            "(decay 0.9999), as the reference RT-DETR recipe does. On by default.",
+        ),
+    ] = True,
     limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
     device: Annotated[str | None, typer.Option("--device")] = None,
 ) -> None:
@@ -596,6 +604,7 @@ def train_detr(
         select_metric=select_metric,
         cls_loss_weight=cls_weight,
         augment=augment,
+        ema=ema,
         model_name=model,
         epochs=epochs,
         batch_size=batch_size,
