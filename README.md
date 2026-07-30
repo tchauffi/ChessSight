@@ -120,6 +120,40 @@ uv run chesssight assets bake ~/assets/my-set/manifest.json -o ~/assets/my-set-b
 Measured on the uppalong Staunton set: **21 s → 0.5 s per image**, and 248 MB → 24 MB
 on disk. Point `asset_manifest` at the baked manifest for real runs.
 
+### Environment lighting (HDRI)
+
+The procedural sun-plus-fills rig makes clean, directional, physically simple light. A
+real room does not: it throws colour off painted walls, soft gradients through windows,
+several mismatched fixtures, and reflections that land differently on every curved
+piece. That difference is exactly the kind of cue a classifier latches onto, so the
+generator can light scenes with real captured environments instead.
+
+```bash
+uv run chesssight assets hdri ~/assets/chesssight/hdri     # ~22 curated maps at 2k
+```
+
+Then point the config at the directory:
+
+```yaml
+lighting:
+  hdri_dir: ~/assets/chesssight/hdri
+  hdri_probability: 0.5      # the rest of the run uses the procedural rig
+```
+
+The maps come from [Poly Haven](https://polyhaven.com/hdris) and are **CC0** — the one
+asset class here with no licence to propagate. They are curated by name rather than
+pulled by category: a category filter returns abandoned factories and Christmas photo
+studios, and lighting a chessboard by a derelict boiler room is domain *noise*, not
+domain randomisation. Everything included is a room a game could plausibly be played
+in, in a deliberate mix of daylight and artificial light.
+
+Two behaviours are worth knowing, both learned the hard way. An HDRI **replaces** the
+sun and fills rather than adding to them — lighting a scene with all three at once
+washed it out (mean luminance 148-202 of 255, almost no contrast) and cast a second set
+of shadows contradicting the first. And it gets its own, much narrower strength range,
+because an environment map already encodes absolute radiance, so the wide multiplier
+that a flat-colour world needs simply blows the image out.
+
 **On licensing.** Chess models are easy to find and hard to license. Most GitHub
 repositories carrying one either have no licence at all — which means all rights
 reserved — or committed a third-party asset with no provenance.

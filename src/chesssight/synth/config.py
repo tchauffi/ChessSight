@@ -105,7 +105,12 @@ class LightingConfig(StrictModel):
     hdri_dir: Path | None = None
     hdri_probability: Probability = 0.5
     hdri_rotation_deg: FloatRange = FloatRange(min=0.0, max=360.0)
+    #: Multiplier on a flat-colour world, which carries no absolute scale.
     world_strength: FloatRange = FloatRange(min=0.3, max=2.5)
+    #: Multiplier on an *HDRI*, kept much narrower. An environment map already
+    #: encodes absolute radiance, so 1.0 is roughly correct exposure and the wide
+    #: flat-colour range simply blows the image out.
+    hdri_strength: FloatRange = FloatRange(min=0.5, max=1.6)
     world_color_temperature: FloatRange = FloatRange(min=3200.0, max=7500.0)
     #: Sun energy is an irradiance in W/m^2, so unlike point/area lamps it does not
     #: depend on how large the scene is in Blender units. That makes it the reliable

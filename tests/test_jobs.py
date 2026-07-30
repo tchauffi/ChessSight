@@ -434,3 +434,58 @@ class TestCapturedPieces:
         )
         for spec in jobs.iter_jobs(config, writer):
             assert len(spec.pieces.placements) + len(spec.pieces.captured) < 255
+
+
+class TestHdriLighting:
+    """An environment map must be the *only* light, not an extra one."""
+
+    @staticmethod
+    def hdri_config(tmp_path, probability=1.0, **lighting):
+        (tmp_path / "room_2k.hdr").write_bytes(b"stand-in")
+        (tmp_path / "notes.txt").write_bytes(b"ignored")
+        payload = {"hdri_dir": str(tmp_path), "hdri_probability": probability}
+        payload.update(lighting)
+        return make_config(lighting=payload)
+
+    def test_only_hdr_and_exr_files_are_offered(self, tmp_path: Path):
+        config = self.hdri_config(tmp_path)
+        lighting = randomize.resolve_lighting(config, derive_rng(0, "lighting"))
+        assert lighting.hdri_path is not None
+        assert lighting.hdri_path.endswith("room_2k.hdr")
+
+    def test_hdri_replaces_the_sun_and_fills(self, tmp_path: Path):
+        # Triple-lighting the scene washed the render out (mean luminance 148-202
+        # of 255) and cast a second, contradictory set of shadows.
+        config = self.hdri_config(tmp_path)
+        for seed in range(20):
+            lighting = randomize.resolve_lighting(config, derive_rng(seed, "lighting"))
+            assert lighting.hdri_path is not None
+            assert lighting.sun_energy == 0.0
+            assert lighting.lamps == []
+
+    def test_without_an_hdri_the_procedural_rig_is_intact(self, tmp_path: Path):
+        config = self.hdri_config(tmp_path, probability=0.0)
+        for seed in range(10):
+            lighting = randomize.resolve_lighting(config, derive_rng(seed, "lighting"))
+            assert lighting.hdri_path is None
+            assert lighting.sun_energy > 0.0
+
+    def test_hdri_uses_its_own_narrower_strength_range(self, tmp_path: Path):
+        # An HDRI encodes absolute radiance, so the wide flat-colour multiplier
+        # would simply blow the image out.
+        config = self.hdri_config(
+            tmp_path,
+            hdri_strength={"min": 0.9, "max": 1.1},
+            world_strength={"min": 8.0, "max": 9.0},
+        )
+        for seed in range(10):
+            lighting = randomize.resolve_lighting(config, derive_rng(seed, "lighting"))
+            assert 0.9 <= lighting.world_strength <= 1.1
+
+    def test_a_missing_hdri_directory_falls_back_silently(self):
+        config = make_config(
+            lighting={"hdri_dir": "/nonexistent/hdri", "hdri_probability": 1.0}
+        )
+        lighting = randomize.resolve_lighting(config, derive_rng(0, "lighting"))
+        assert lighting.hdri_path is None
+        assert lighting.sun_energy > 0.0

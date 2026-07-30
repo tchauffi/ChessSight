@@ -978,3 +978,49 @@ def train_video(
         f"wrote {result['output']}: {result['frames']} frames at "
         f"{result['fps']:.1f} fps, mean {result['mean_pieces']:.1f} pieces/frame"
     )
+
+
+@assets_app.command("hdri")
+def assets_hdri(
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Where to write the .hdr files.")
+    ] = Path("~/assets/chesssight/hdri"),
+    resolution: Annotated[
+        str, typer.Option("--resolution", help="Poly Haven resolution, e.g. 1k/2k/4k.")
+    ] = "2k",
+    only: Annotated[
+        str | None,
+        typer.Option(
+            "--only", help="Comma-separated group names: halls, rooms, offices, social."
+        ),
+    ] = None,
+) -> None:
+    """Download CC0 indoor HDRI environment maps for image-based lighting.
+
+    Real rooms throw coloured bounce, soft window gradients and mismatched
+    fixtures that the procedural sun-plus-fills rig cannot produce -- and piece
+    appearance under light is precisely what failed to transfer to real
+    photographs. Point `lighting.hdri_dir` at the result.
+    """
+    from chesssight.synth.hdri import CURATED, download
+
+    slugs = None
+    if only:
+        groups = [g.strip() for g in only.split(",")]
+        unknown = [g for g in groups if g not in CURATED]
+        if unknown:
+            typer.echo(f"unknown groups {unknown}; have {sorted(CURATED)}", err=True)
+            raise typer.Exit(1)
+        slugs = [slug for g in groups for slug in CURATED[g]]
+
+    result = download(
+        Path(out), slugs=slugs, resolution=resolution, progress=typer.echo
+    )
+    typer.echo(
+        f"{result['total']} maps in {result['dir']} "
+        f"({result['downloaded']} fetched, {result['skipped']} already present)"
+    )
+    typer.echo("\nUse them with:")
+    typer.echo("  lighting:")
+    typer.echo(f"    hdri_dir: {out}")
+    typer.echo("    hdri_probability: 0.7")

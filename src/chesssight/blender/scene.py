@@ -45,6 +45,11 @@ def build_lighting(spec: dict) -> list[bpy.types.Object]:
     """A sun as key light plus optional area fills."""
     created = []
 
+    # Zero energy means an HDRI is doing the lighting; creating the lamp anyway
+    # would leave a dead object in the scene for every frame of a long run.
+    if spec["sun_energy"] <= 0.0:
+        return created
+
     sun_data = bpy.data.lights.new("Sun", type="SUN")
     sun_data.energy = spec["sun_energy"]
     sun_data.angle = math.radians(spec["sun_angle_deg"])

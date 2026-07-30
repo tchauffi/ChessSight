@@ -37,6 +37,11 @@ lighting:
   # with no external assets.
   hdri_dir: null
   hdri_probability: 0.5
+  # An HDRI is the *only* light when one is used: the procedural sun and fills are
+  # suppressed, since adding them on top triple-lights the scene and erases the
+  # lighting character the map was chosen for. It also gets its own, much narrower
+  # strength range, because an environment map already encodes absolute radiance.
+  hdri_strength: {min: 0.5, max: 1.6}
   world_strength: {min: 0.3, max: 2.5}
   world_color_temperature: {min: 3200.0, max: 7500.0}
   sun_energy: {min: 1.0, max: 6.0}

@@ -38,6 +38,11 @@ from chesssight.synth.seeds import derive_rng
 
 HDRI_SUFFIXES = (".hdr", ".exr")
 
+#: Height of the tallest piece in square units, before per-scene style jitter. The
+#: camera has to leave room for a king standing at the far edge, which at grazing
+#: elevations is a bigger vertical extent than the whole foreshortened board.
+TALLEST_PIECE = max(profiles.PIECE_HEIGHTS.values())
+
 
 def _jitter_color(color: list[float], rng: random.Random, amount: float) -> list[float]:
     """Vary a colour by a *relative* amount, preserving its hue.
@@ -165,8 +170,14 @@ def resolve_lighting(config: GeneratorConfig, rng: random.Random) -> ResolvedLig
     hdris = _find_hdris(lighting.hdri_dir)
     use_hdri = bool(hdris) and rng.random() < lighting.hdri_probability
 
+    # An environment map already contains the room's windows, fixtures and bounce.
+    # Adding the procedural sun and fills on top triple-lights the scene: it washes
+    # the image out, casts a second set of shadows in a contradictory direction, and
+    # erases the very lighting character the map was fetched for. Measured before
+    # this guard: mean luminance 148-202 of 255 with almost no contrast.
     lamps = []
-    for _ in range(lighting.lamp_count.sample(rng)):
+    lamp_count = 0 if use_hdri else lighting.lamp_count.sample(rng)
+    for _ in range(lamp_count):
         azimuth = math.radians(rng.uniform(0.0, 360.0))
         elevation = math.radians(lighting.lamp_elevation_deg.sample(rng))
         distance = lighting.lamp_distance.sample(rng)
@@ -190,10 +201,16 @@ def resolve_lighting(config: GeneratorConfig, rng: random.Random) -> ResolvedLig
     sun_elevation = math.radians(lighting.sun_elevation_deg.sample(rng))
     sun_horizontal = math.cos(sun_elevation)
 
+    strength = (
+        lighting.hdri_strength.sample(rng)
+        if use_hdri
+        else lighting.world_strength.sample(rng)
+    )
+
     return ResolvedLighting(
         hdri_path=str(rng.choice(hdris)) if use_hdri else None,
         hdri_rotation_deg=lighting.hdri_rotation_deg.sample(rng),
-        world_strength=lighting.world_strength.sample(rng),
+        world_strength=strength,
         world_color=_color_temperature_rgb(
             lighting.world_color_temperature.sample(rng)
         ),
@@ -202,7 +219,7 @@ def resolve_lighting(config: GeneratorConfig, rng: random.Random) -> ResolvedLig
             sun_horizontal * math.sin(sun_azimuth) * 20.0,
             math.sin(sun_elevation) * 20.0,
         ],
-        sun_energy=lighting.sun_energy.sample(rng),
+        sun_energy=0.0 if use_hdri else lighting.sun_energy.sample(rng),
         sun_angle_deg=lighting.sun_angle_deg.sample(rng),
         sun_color=_color_temperature_rgb(lighting.world_color_temperature.sample(rng)),
         lamps=lamps,

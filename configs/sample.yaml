@@ -32,6 +32,11 @@ camera:
   dof_probability: 0.35
 
 lighting:
+  # Fetch maps with `chesssight assets hdri`, then point hdri_dir at them. An HDRI
+  # replaces the procedural sun and fills rather than adding to them.
+  hdri_dir: null
+  hdri_probability: 0.5
+  hdri_strength: {min: 0.5, max: 1.6}
   world_strength: {min: 0.3, max: 2.5}
   world_color_temperature: {min: 3200.0, max: 7500.0}
   sun_energy: {min: 1.0, max: 6.0}
