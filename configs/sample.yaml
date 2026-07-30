@@ -21,9 +21,9 @@ render:
 
 camera:
   azimuth_deg: {min: 0.0, max: 360.0}
-  # Down to 18 degrees so the set includes the low, oblique angles that hand-held
-  # phone photographs are actually taken from.
-  elevation_deg: {min: 18.0, max: 75.0}
+  # Down to 8 degrees so the set includes the grazing, near edge-on angles that
+  # hand-held phone photographs and broadcast cameras across a table give.
+  elevation_deg: {min: 8.0, max: 75.0}
   # Below 1.0 crops the board, which real photographs do constantly.
   framing_margin: {min: 0.95, max: 1.9}
   focal_mm: {min: 24.0, max: 85.0}

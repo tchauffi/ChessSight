@@ -23,8 +23,9 @@ from chesssight.data.geometry import (
 )
 from chesssight.data.masks import instance_ids, load_id_image, role_codes
 from chesssight.data.qa import contact_sheet, render_overlay
+from chesssight.synth.config import CameraConfig
 from chesssight.synth.positions import StartingPositionSampler
-from chesssight.synth.postprocess import build_sample, load_raw
+from chesssight.synth.postprocess import MIN_VISIBLE_PIXELS, build_sample, load_raw
 from tests.integration.conftest import make_run, run_blender
 
 pytestmark = pytest.mark.blender
@@ -168,18 +169,43 @@ class TestLabels:
 
 class TestIdPass:
     def test_id_pass_contains_exactly_the_visible_pieces(self, rendered):
+        """Every piece the id pass paints is labelled, with a matching pixel count.
+
+        Compared against ``MIN_VISIBLE_PIXELS`` rather than against "painted at all":
+        ``visible`` is deliberately false for a piece holding only a handful of pixels,
+        since that is as likely to be an anti-aliased sliver as a piece genuinely
+        peeking out. Asserting painted-at-all == visible conflates the two, and passed
+        only for as long as no pose happened to produce a piece in the 1-11 pixel band.
+        """
         root, _, samples = rendered
         for sample in samples:
             id_image = load_id_image(root / sample.mask_image)
-            painted = {
-                int(value)
-                for value in np.unique(
-                    instance_ids(id_image)[role_codes(id_image) == 1]
+            ids = instance_ids(id_image)
+            pieces = role_codes(id_image) == 1
+            painted = {int(value) for value in np.unique(ids[pieces]) if value != 0}
+            by_instance = {piece.instance_id: piece for piece in sample.pieces}
+
+            # Nothing may be painted that the labels do not describe at all.
+            assert painted <= set(by_instance), (
+                f"{sample.id}: id pass paints "
+                f"{sorted(painted - set(by_instance))}, which is unlabelled"
+            )
+            for instance_id in painted:
+                piece = by_instance[instance_id]
+                area = int(((ids == instance_id) & pieces).sum())
+                assert piece.visible_pixels == area, (
+                    f"{sample.id}: instance {instance_id} covers {area} px but the "
+                    f"label records {piece.visible_pixels}"
                 )
-                if value != 0
-            }
-            visible = {piece.instance_id for piece in sample.pieces if piece.visible}
-            assert painted == visible
+                assert piece.visible == (area >= MIN_VISIBLE_PIXELS)
+
+            # ...and every unpainted piece must be labelled hidden.
+            for instance_id, piece in by_instance.items():
+                if instance_id not in painted:
+                    assert not piece.visible and not piece.visible_pixels, (
+                        f"{sample.id}: instance {instance_id} is absent from the id "
+                        f"pass but labelled visible"
+                    )
 
     def test_most_pieces_are_visible_from_a_valid_pose(self, rendered):
         _, _, samples = rendered
@@ -228,7 +254,7 @@ class TestIdPass:
                         abs(hit.file_index - file_index),
                     )
                     # How far the occluder can legitimately be depends on the camera
-                    # elevation: at the 18-degree end of the range a king two or
+                    # elevation: at the 8-degree end of the range a king two or
                     # three ranks back really does cover the square in front of it,
                     # and that is the hard case the low angles exist for. What no
                     # legitimate pose produces is a hit halfway across the board, so
@@ -367,3 +393,111 @@ class TestCapturedPieces:
             ]
             assert off_board
             assert all(piece.bbox is not None for piece in off_board)
+
+
+class TestGrazingViews:
+    """The low end of the elevation range, rendered rather than reasoned about.
+
+    Grazing views are where the detector did worst on real footage, so the floor was
+    lowered to meet them. Two things have to hold there, and neither is obvious: the
+    board plane is nearly edge-on, which is exactly where a homography goes
+    ill-conditioned; and the projected board collapses vertically, which is where the
+    old board-diagonal framing left the camera much too far back.
+    """
+
+    ELEVATION = CameraConfig().elevation_deg.min
+
+    @pytest.fixture(scope="class")
+    def grazing(self, render_root):
+        root = render_root / "grazing"
+        _, _, shard = make_run(
+            root,
+            count=4,
+            seed=8181,
+            overrides={
+                "camera": {
+                    "elevation_deg": {"min": self.ELEVATION, "max": self.ELEVATION},
+                    # Square-on down a file, as a broadcast camera sits. Pinned rather
+                    # than sampled because it is the azimuth where the board's lateral
+                    # extent is smallest (8 squares, not 8*sqrt(2)) and so the one the
+                    # old diagonal framing got most wrong; at 45 degrees the two agree
+                    # exactly and four samples could not tell them apart.
+                    "azimuth_deg": {"min": 0.0, "max": 0.0},
+                    # Fixed at 1.0 so this measures the framing formula rather than
+                    # the deliberate crop the sampled margin sometimes applies.
+                    "framing_margin": {"min": 1.0, "max": 1.0},
+                    "target_jitter": {"min": 0.0, "max": 0.0},
+                },
+                "positions": {
+                    "pgn_paths": [],
+                    "weight_pgn": 0.0,
+                    "weight_random": 1.0,
+                    "random_min_pieces": 16,
+                    "random_max_pieces": 32,
+                },
+            },
+        )
+        assert run_blender(shard).returncode == 0
+        return [
+            build_sample(
+                load_raw(root / "raw_labels" / f"{index:06d}.json"),
+                image_rel_path=f"images/{index:06d}.png",
+                mask_rel_path=f"id_pass/{index:06d}.png",
+            )
+            for index in range(4)
+        ]
+
+    def test_the_homography_survives_a_near_edge_on_board(self, grazing):
+        for sample in grazing:
+            assert sample.board.reprojection_error_px < 0.5, (
+                f"{sample.id}: homography degraded at {self.ELEVATION} degrees "
+                f"elevation ({sample.board.reprojection_error_px:.3f} px)"
+            )
+
+    def test_the_board_is_not_mirrored_at_a_grazing_angle(self, grazing):
+        # Chirality is hardest to get right when the board is nearly edge-on, and a
+        # mirrored board stays self-consistent across every other label.
+        for sample in grazing:
+            assert not is_mirrored(sample.board.corners_px), f"{sample.id} is mirrored"
+
+    def test_the_board_fills_the_frame_without_spilling_out_of_it(self, grazing):
+        """At margin 1.0 a grazing view must fill the frame and stay inside it.
+
+        Both bounds have been violated by a real formula. Measuring the board's extent
+        at the board centre's depth -- which the board-diagonal framing did -- reads
+        the foreshortened depth as "lots of spare room" and concludes the camera can
+        come closer; rendered, the board spanned 1.3x to 2.9x the frame width with not
+        one corner in shot. Correcting that by standing back until the *near* corner
+        fits, but measuring at the centre, overshoots the other way and leaves the
+        board at 59% of the frame width.
+        """
+        for sample in grazing:
+            xs = [x for x, _ in sample.board.corners_px]
+            width, _ = sample.camera.resolution
+            span = (max(xs) - min(xs)) / width
+            assert sample.board.all_corners_in_frame, (
+                f"{sample.id}: board spills out of frame at {self.ELEVATION} degrees "
+                f"(spans {span:.0%} of the width)"
+            )
+            assert span > 0.7, (
+                f"{sample.id}: board spans only {span:.0%} of the frame width, so the "
+                "camera is needlessly far back"
+            )
+
+    def test_pieces_are_still_individually_visible(self, grazing):
+        """Near edge-on the near rank hides much of the far one.
+
+        Pooled across samples rather than asserted per-sample: an individual sparse
+        position seen from one azimuth can legitimately hide a whole file behind a
+        king, and it is the rate over poses that says whether the floor is worth
+        labelling. Measured at 512px over 12 samples, 8 degrees leaves 97.1% of pieces
+        visible against 99.3% at 18, with the worst single sample at 90%.
+        """
+        pieces = [
+            piece for sample in grazing for piece in sample.pieces if piece.on_board
+        ]
+        visible = [piece for piece in pieces if piece.visible]
+        assert len(visible) / len(pieces) > 0.85, (
+            f"only {len(visible)}/{len(pieces)} pieces visible at "
+            f"{self.ELEVATION} degrees elevation"
+        )

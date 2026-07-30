@@ -18,6 +18,7 @@ from chesssight.data.fen import (
     is_white,
     iter_occupied,
 )
+from chesssight.synth import profiles
 from chesssight.synth.config import GeneratorConfig
 from chesssight.synth.jobspec import (
     CapturedPlacement,
@@ -89,23 +90,91 @@ def _color_temperature_rgb(kelvin: float) -> list[float]:
     return [min(1.0, max(0.0, channel)) for channel in (red, green, blue)]
 
 
+Vector = tuple[float, float, float]
+
+
+def camera_basis(
+    azimuth_rad: float, elevation_rad: float
+) -> tuple[Vector, Vector, Vector]:
+    """``(toward_camera, right, up)`` for a camera aimed at the origin.
+
+    ``toward_camera`` is the unit vector from the origin out to the camera, so a
+    point's dot product with it is how much *nearer* the camera that point is than
+    the board centre. That term is what makes grazing framing work.
+    """
+    toward_camera = (
+        math.cos(elevation_rad) * math.cos(azimuth_rad),
+        math.cos(elevation_rad) * math.sin(azimuth_rad),
+        math.sin(elevation_rad),
+    )
+    right = (-math.sin(azimuth_rad), math.cos(azimuth_rad), 0.0)
+    up = (
+        toward_camera[1] * right[2] - toward_camera[2] * right[1],
+        toward_camera[2] * right[0] - toward_camera[0] * right[2],
+        toward_camera[0] * right[1] - toward_camera[1] * right[0],
+    )
+    return toward_camera, right, up
+
+
 def framing_distance(
     focal_mm: float,
     sensor_width_mm: float,
     *,
     square_size: float,
     margin: float,
+    azimuth_rad: float,
+    elevation_rad: float,
+    aspect: float = 1.0,
+    piece_height: float = TALLEST_PIECE,
 ) -> float:
-    """Distance at which the board subtends ``1 / margin`` of the frame.
+    """Distance at which the board and its tallest piece fill ``1 / margin`` of frame.
 
     Derived rather than sampled: focal length and distance are not independent, and
     drawing them separately produces a long lens at close range, which puts most of
-    the board outside the image. Using the board's diagonal makes this conservative
-    for oblique views, where foreshortening only shrinks the projected extent.
+    the board outside the image.
+
+    Solved under true perspective, for the eight corners of the box enclosing the
+    board *and a standing king*. For a camera at distance ``d`` aimed at the origin, a
+    corner ``p`` sits at depth ``d - p.toward_camera`` with image offsets ``p.right``
+    and ``p.up`` that do not depend on ``d`` at all, so "this corner is inside the
+    frame" rearranges to a plain lower bound on ``d``::
+
+        d >= p.toward_camera + |p.right| / tan(fov_right)
+
+    and the answer is the largest bound over the corners and both axes. No iteration.
+
+    The ``p.toward_camera`` term is the one that matters and the one a board-diagonal
+    formula silently drops. It is the corner's depth relative to the board centre, and
+    at grazing elevations the near corner is *much* closer to the camera than the
+    centre is -- so it subtends a far larger angle than its size at the centre's depth
+    suggests. Measured with that term missing, at 8 degrees elevation square-on to the
+    board, the board spanned 1.3x to 2.9x the frame width with no corner in shot. It
+    also drops piece height, which cropped the tops of kings standing near the far
+    corner.
     """
-    half_diagonal = math.hypot(BOARD_SIZE, BOARD_SIZE) / 2.0 * square_size
-    half_fov = math.atan(sensor_width_mm / (2.0 * focal_mm))
-    return half_diagonal / math.tan(half_fov) * margin
+    half = BOARD_SIZE / 2.0 * square_size
+    top = piece_height * square_size
+    toward_camera, right, up = camera_basis(azimuth_rad, elevation_rad)
+
+    # Blender's AUTO sensor fit maps ``sensor_width`` to the longer image dimension.
+    long_tan = sensor_width_mm / (2.0 * focal_mm)
+    short_tan = long_tan * min(aspect, 1.0 / aspect)
+    tan_right, tan_up = (
+        (long_tan, short_tan) if aspect >= 1.0 else (short_tan, long_tan)
+    )
+
+    def bound(point: Vector) -> float:
+        depth_offset = sum(a * b for a, b in zip(point, toward_camera, strict=True))
+        lateral = abs(sum(a * b for a, b in zip(point, right, strict=True)))
+        vertical = abs(sum(a * b for a, b in zip(point, up, strict=True)))
+        return depth_offset + max(lateral / tan_right, vertical / tan_up)
+
+    return margin * max(
+        bound((x, y, z))
+        for x in (-half, half)
+        for y in (-half, half)
+        for z in (0.0, top)
+    )
 
 
 def resolve_camera(config: GeneratorConfig, rng: random.Random) -> ResolvedCamera:
@@ -120,6 +189,10 @@ def resolve_camera(config: GeneratorConfig, rng: random.Random) -> ResolvedCamer
         camera_config.sensor_width_mm,
         square_size=config.board.square_size,
         margin=camera_config.framing_margin.sample(rng),
+        azimuth_rad=azimuth,
+        elevation_rad=elevation,
+        aspect=config.render.resolution[0] / config.render.resolution[1],
+        piece_height=TALLEST_PIECE * config.pieces.height_scale.max,
     )
     distance = min(
         max(distance, camera_config.distance.min * config.board.square_size),

@@ -78,12 +78,19 @@ class CameraConfig(StrictModel):
     """Camera pose and lens randomisation, in board units (1 unit = one square)."""
 
     azimuth_deg: FloatRange = FloatRange(min=0.0, max=360.0)
-    #: Low elevations mimic hand-held phone shots taken from across the table.
-    elevation_deg: FloatRange = FloatRange(min=18.0, max=75.0)
+    #: Low elevations mimic hand-held phone shots and broadcast cameras set up across
+    #: the table -- the grazing views the detector was worst on. The floor is a
+    #: *usefulness* limit, not a correctness one: labels stay exact all the way down
+    #: to 4 degrees (measured reprojection error 0.0002 px, no rejected samples, piece
+    #: boxes barely shrink because pieces lose depth but keep height). It sits at 8
+    #: because below that a rank is under 9 px deep and the near rank hides the far
+    #: one outright, so the extra samples add occlusion rather than new appearance.
+    elevation_deg: FloatRange = FloatRange(min=8.0, max=75.0)
     #: How much room to leave around the board, as a multiple of the distance at
-    #: which it exactly fills the frame. Distance is *derived* from this and the
-    #: focal length rather than drawn independently -- sampling the two separately
-    #: means a long lens at a short distance, and most of the board off-screen.
+    #: which it exactly fills the frame. Distance is *derived* from this, the focal
+    #: length and the camera's own pose rather than drawn independently -- sampling
+    #: distance separately means a long lens at a short distance, and most of the
+    #: board off-screen. See :func:`~chesssight.synth.randomize.framing_distance`.
     #: Values below 1.0 deliberately crop the board, which real photographs do
     #: constantly and a model must cope with.
     framing_margin: FloatRange = FloatRange(min=0.95, max=1.9)

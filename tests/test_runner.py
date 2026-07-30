@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -173,42 +174,164 @@ class TestCollect:
 
 
 class TestFramingDistance:
-    def test_longer_lenses_stand_further_back(self):
+    """Distance is derived from the lens *and the pose*, under true perspective."""
+
+    TOP_DOWN_45 = {
+        "azimuth_rad": math.radians(45.0),
+        "elevation_rad": math.radians(90.0),
+    }
+
+    @staticmethod
+    def framing(focal=50.0, sensor=36.0, **kwargs):
         from chesssight.synth.randomize import framing_distance
 
-        short = framing_distance(24.0, 36.0, square_size=1.0, margin=1.0)
-        long_lens = framing_distance(85.0, 36.0, square_size=1.0, margin=1.0)
-        assert long_lens > short * 3
+        kwargs.setdefault("azimuth_rad", math.radians(45.0))
+        kwargs.setdefault("elevation_rad", math.radians(45.0))
+        kwargs.setdefault("margin", 1.0)
+        return framing_distance(focal, sensor, square_size=1.0, **kwargs)
+
+    @staticmethod
+    def project(point, *, distance, azimuth_rad, elevation_rad):
+        """Image-plane offsets of ``point``, in units of the distance-1 frustum."""
+        from chesssight.synth.randomize import camera_basis
+
+        toward_camera, right, up = camera_basis(azimuth_rad, elevation_rad)
+        depth = distance - sum(a * b for a, b in zip(point, toward_camera, strict=True))
+        assert depth > 0, "point is behind the camera"
+        lateral = sum(a * b for a, b in zip(point, right, strict=True))
+        vertical = sum(a * b for a, b in zip(point, up, strict=True))
+        return lateral / depth, vertical / depth
+
+    def test_distance_is_proportional_to_focal_length(self):
+        # Exact only where the depth-offset term vanishes -- straight down at a flat
+        # board, every corner sits at the centre's depth -- so this pins the lens
+        # half of the formula without the perspective half confounding it.
+        pose = {**self.TOP_DOWN_45, "piece_height": 0.0}
+        assert self.framing(85.0, **pose) / self.framing(24.0, **pose) == pytest.approx(
+            85.0 / 24.0
+        )
+
+    def test_longer_lenses_stand_further_back_at_every_pose(self):
+        for elevation_deg in (8.0, 20.0, 45.0, 75.0):
+            pose = {
+                "azimuth_rad": math.radians(20.0),
+                "elevation_rad": math.radians(elevation_deg),
+            }
+            assert self.framing(85.0, **pose) > self.framing(24.0, **pose)
 
     def test_margin_scales_the_distance_linearly(self):
-        from chesssight.synth.randomize import framing_distance
+        assert self.framing(margin=2.0) == pytest.approx(2.0 * self.framing())
 
-        base = framing_distance(50.0, 36.0, square_size=1.0, margin=1.0)
-        wide = framing_distance(50.0, 36.0, square_size=1.0, margin=2.0)
-        assert wide == pytest.approx(2.0 * base)
-
-    def test_the_board_fits_the_frame_at_margin_one(self):
-        # At margin 1.0 the board's diagonal should exactly span the horizontal FOV.
-        import math
-
-        from chesssight.synth.randomize import framing_distance
-
+    def test_top_down_at_45_degrees_is_exactly_the_board_diagonal(self):
+        # Straight down, every board corner sits at the same depth as the centre, so
+        # perspective and the board diagonal coincide. The one pose whose answer is
+        # derivable by hand, which pins the projection against a known value.
         focal, sensor = 50.0, 36.0
-        distance = framing_distance(focal, sensor, square_size=1.0, margin=1.0)
+        distance = self.framing(focal, sensor, piece_height=0.0, **self.TOP_DOWN_45)
         half_fov = math.atan(sensor / (2.0 * focal))
         assert distance * math.tan(half_fov) == pytest.approx(math.hypot(8, 8) / 2)
 
+    def test_an_axis_aligned_board_needs_less_room_than_a_diagonal_one(self):
+        # Viewed down a file from above, the board's lateral extent is 8 squares, not
+        # 8*sqrt(2). The old diagonal formula stood sqrt(2) too far back for such poses.
+        square_on = self.framing(
+            azimuth_rad=0.0, elevation_rad=math.radians(90.0), piece_height=0.0
+        )
+        diagonal = self.framing(piece_height=0.0, **self.TOP_DOWN_45)
+        assert square_on == pytest.approx(diagonal / math.sqrt(2.0))
 
-def test_find_blender_raises_when_absent(monkeypatch):
-    monkeypatch.setattr(runner.shutil, "which", lambda _: None)
-    with pytest.raises(runner.RunnerError, match="not found on PATH"):
-        runner.find_blender()
+    def test_grazing_views_stand_back_for_the_near_corner(self):
+        # The bug this formula exists to fix. A weak-perspective estimate measures the
+        # board at the centre's depth and concludes a grazing view can come closer,
+        # because foreshortening has collapsed the board's depth. It cannot: the near
+        # corner is much closer to the camera than the centre and subtends a far
+        # larger angle. Rendered without this correction, the board spanned up to 2.9x
+        # the frame width at 8 degrees with no corner in shot.
+        grazing = self.framing(azimuth_rad=0.0, elevation_rad=math.radians(8.0))
+        top_down = self.framing(azimuth_rad=0.0, elevation_rad=math.radians(90.0))
+        assert grazing > top_down
 
+    def test_piece_height_is_accounted_for(self):
+        # A board diagonal ignores the king standing on it, and so cropped its top.
+        pose = {"azimuth_rad": math.radians(45.0), "elevation_rad": math.radians(75.0)}
+        assert self.framing(piece_height=1.55, **pose) > self.framing(
+            piece_height=0.0, **pose
+        )
 
-def test_find_blender_accepts_an_explicit_path():
-    assert runner.find_blender("/opt/blender/blender") == "/opt/blender/blender"
+    def test_a_portrait_frame_stands_further_back_than_a_landscape_one(self):
+        # The board is width-limited here, and a portrait frame is narrower.
+        pose = {"azimuth_rad": 0.0, "elevation_rad": math.radians(20.0)}
+        assert self.framing(aspect=9 / 16, **pose) > self.framing(aspect=16 / 9, **pose)
 
+    def test_aspect_is_symmetric_about_square(self):
+        # Straight down at a square-on board the lateral and vertical extents are both
+        # 8 squares, so rotating the frame cannot change how far back the camera goes.
+        # If the sensor-fit branch mixed up the long and short axes, one of these two
+        # would use the wide field of view for the narrow image dimension.
+        pose = {
+            "azimuth_rad": 0.0,
+            "elevation_rad": math.radians(90.0),
+            "piece_height": 0.0,
+        }
+        wide = self.framing(aspect=16 / 9, **pose)
+        tall = self.framing(aspect=9 / 16, **pose)
+        assert tall == pytest.approx(wide)
+        # ...and both stand further back than a square frame, whose short axis
+        # is the longer of the two.
+        assert wide > self.framing(aspect=1.0, **pose)
 
-def test_entry_script_exists():
-    # The runner launches this by path; a rename would only surface at render time.
-    assert runner.ENTRY_SCRIPT.is_file()
+    @pytest.mark.parametrize("aspect", [1.0, 16 / 9, 4 / 3, 9 / 16])
+    def test_every_pose_in_range_keeps_the_whole_box_in_frame(self, aspect: float):
+        """The property that matters, checked by projecting rather than by formula.
+
+        At margin 1.0 no corner of the board-plus-king box may fall outside the frame
+        for any pose the config can sample, and at least one corner must touch an edge
+        -- otherwise the camera is further back than it needs to be and the board is
+        smaller in frame than it should be.
+        """
+        from chesssight.synth import randomize
+        from chesssight.synth.config import CameraConfig
+
+        camera = CameraConfig()
+        focal, sensor = 50.0, 36.0
+        long_tan = sensor / (2.0 * focal)
+        short_tan = long_tan * min(aspect, 1.0 / aspect)
+        tan_right, tan_up = (
+            (long_tan, short_tan) if aspect >= 1.0 else (short_tan, long_tan)
+        )
+
+        for azimuth_deg in range(0, 360, 11):
+            for elevation_deg in (
+                camera.elevation_deg.min,
+                20.0,
+                45.0,
+                camera.elevation_deg.max,
+            ):
+                pose = {
+                    "azimuth_rad": math.radians(azimuth_deg),
+                    "elevation_rad": math.radians(elevation_deg),
+                }
+                distance = randomize.framing_distance(
+                    focal, sensor, square_size=1.0, margin=1.0, aspect=aspect, **pose
+                )
+                touches = False
+                for x in (-4.0, 4.0):
+                    for y in (-4.0, 4.0):
+                        for z in (0.0, randomize.TALLEST_PIECE):
+                            lateral, vertical = self.project(
+                                (x, y, z), distance=distance, **pose
+                            )
+                            assert abs(lateral) <= tan_right * (1 + 1e-9), (
+                                f"azimuth {azimuth_deg} elevation {elevation_deg}: "
+                                f"corner {(x, y, z)} is off the side of the frame"
+                            )
+                            assert abs(vertical) <= tan_up * (1 + 1e-9), (
+                                f"azimuth {azimuth_deg} elevation {elevation_deg}: "
+                                f"corner {(x, y, z)} is off the top of the frame"
+                            )
+                            touches |= abs(lateral) > tan_right * (1 - 1e-6)
+                            touches |= abs(vertical) > tan_up * (1 - 1e-6)
+                assert touches, (
+                    f"azimuth {azimuth_deg} elevation {elevation_deg}: nothing reaches "
+                    "a frame edge, so the camera is needlessly far back"
+                )

@@ -19,11 +19,16 @@ render:
   render_id_pass: true
 
 camera:
-  # Elevation reaches down to 18 degrees so the set includes the low, oblique
-  # angles that hand-held phone photographs are actually taken from.
+  # Elevation reaches down to 8 degrees so the set includes the grazing, near
+  # edge-on angles that hand-held phone photographs and broadcast cameras across a
+  # table actually give -- the views the detector was weakest on. Labels stay exact
+  # that low; see CameraConfig.elevation_deg for the measurements.
   azimuth_deg: {min: 0.0, max: 360.0}
-  elevation_deg: {min: 18.0, max: 75.0}
-  distance: {min: 11.0, max: 20.0}
+  elevation_deg: {min: 8.0, max: 75.0}
+  # A safety guard only, not a framing control: distance is derived from the lens and
+  # the pose. Kept wide on purpose -- narrowed to 11-20 it overrode the derived value
+  # on 70% of samples and cropped the board instead of framing it.
+  distance: {min: 6.0, max: 40.0}
   roll_deg: {min: -6.0, max: 6.0}
   focal_mm: {min: 24.0, max: 85.0}
   sensor_width_mm: 36.0
