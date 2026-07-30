@@ -45,6 +45,49 @@ class SplitSpec:
         return int.from_bytes(digest, "big") / 2**32 < self.val_fraction
 
 
+def select_entries(
+    all_entries: list,
+    *,
+    split: str,
+    spec: SplitSpec | None = None,
+    split_source: str = "auto",
+) -> tuple[list, str]:
+    """Pick the entries belonging to ``split``, and say how the split was decided.
+
+    A dataset that carries its own division is respected. ChessReD splits by *game*
+    -- images from one game share a board, a room and a camera -- so re-splitting it
+    by hash would leak all three across the boundary and flatter every number
+    measured against it. A synthetic run has no such structure and stores one split
+    for everything, so it gets hashed.
+
+    Shared by the loaders and the mAP evaluator on purpose. When only the loaders
+    knew this rule, evaluating a single-split dataset on ``val`` matched no stored
+    entry at all and quietly reported ``map=-1`` every epoch, which in turn made
+    ``best`` whichever epoch happened to run first.
+    """
+    spec = spec or SplitSpec()
+    stored = {entry.split for entry in all_entries}
+    if split_source == "auto":
+        split_source = "stored" if len(stored) > 1 else "hash"
+
+    if split_source == "stored":
+        entries = [
+            entry for entry in all_entries if split == "all" or entry.split == split
+        ]
+    else:
+        if split == "test":
+            raise ValueError(
+                "this dataset stores a single split, so there is no separate "
+                "test set to hash out; use 'val' or pass split_source='stored'"
+            )
+        entries = [
+            entry
+            for entry in all_entries
+            if split == "all" or spec.is_val(entry.id) == (split == "val")
+        ]
+    return entries, split_source
+
+
 def _annotations(
     sample: Sample, *, include_board: bool, include_off_board: bool = True
 ) -> list[dict]:
@@ -124,31 +167,9 @@ class ChessDetectionDataset(Dataset):
         spec = split_spec or SplitSpec()
         all_entries = reader.entries()
 
-        # A dataset that carries its own division is respected. ChessReD splits by
-        # *game* -- images from one game share a board, a room and a camera -- so
-        # re-splitting it by hash would leak all three across the boundary and
-        # flatter every number measured against it. A synthetic run has no such
-        # structure and stores one split for everything, so it gets hashed.
-        stored = {entry.split for entry in all_entries}
-        if split_source == "auto":
-            split_source = "stored" if len(stored) > 1 else "hash"
-        self.split_source = split_source
-
-        if split_source == "stored":
-            entries = [
-                entry for entry in all_entries if split == "all" or entry.split == split
-            ]
-        else:
-            if split == "test":
-                raise ValueError(
-                    "this dataset stores a single split, so there is no separate "
-                    "test set to hash out; use 'val' or pass split_source='stored'"
-                )
-            entries = [
-                entry
-                for entry in all_entries
-                if split == "all" or spec.is_val(entry.id) == (split == "val")
-            ]
+        entries, self.split_source = select_entries(
+            all_entries, split=split, spec=spec, split_source=split_source
+        )
         if limit is not None:
             entries = entries[:limit]
         if not entries:

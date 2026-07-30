@@ -200,6 +200,7 @@ def evaluate_samples(
     split: str = "test",
     on_board: bool = False,
     limit: int | None = None,
+    split_spec=None,
 ) -> dict[str, float]:
     """Evaluate sample-by-sample, so each image's board polygon is available.
 
@@ -217,7 +218,12 @@ def evaluate_samples(
     model.eval()
     metric = MeanAveragePrecision(box_format="xyxy", class_metrics=True)
 
-    entries = [e for e in reader.entries() if split == "all" or e.split == split]
+    from chesssight.train.dataset import select_entries
+
+    # Same rule the loaders use: a dataset storing one split for everything is
+    # hashed rather than matched literally, so `val` names real samples instead of
+    # matching nothing and reporting map=-1.
+    entries, _ = select_entries(reader.entries(), split=split, spec=split_spec)
     if limit:
         entries = entries[:limit]
 

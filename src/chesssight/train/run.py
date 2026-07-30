@@ -105,6 +105,7 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
                 resolved,
                 split=config.eval_split,
                 on_board=eval_on_board,
+                split_spec=SplitSpec(config.val_fraction),
             )
             record.update(metrics)
             print(
