@@ -9,12 +9,20 @@ Two honest limitations, stated rather than hidden:
 * The detector emits *boxes*, including the board's -- but not the board's corners,
   so there is no homography and no per-square position readout on video. What this
   shows is detection: which pieces, where, how confidently.
-* The calibration was fit on ChessReD's photographs. On a different piece set,
-  board or lighting, the ranking usually survives while the absolute scores drift --
-  measured on stock footage the drift went *upward*, flooding the threshold with
-  false positives. The board gate removes most of them (the board detection
-  transfers far better than piece scores), and ``--top-k`` falls back to ranking;
-  for real use on a new domain, calibrate on a few annotated frames of it.
+* The calibration was fit on ChessReD's photographs, and the further footage moves
+  from those, the less the numbers mean. Measured on real tournament video:
+
+    - Close board, vinyl set, table view (nearest the training domain): the board
+      is found at 0.99 and the pieces it reports are right, but it *under*-detects
+      -- roughly 10 of 15 -- because the calibrated threshold is tuned elsewhere.
+      Lower ``--threshold`` or use ``--top-k``.
+    - Small, blurred, near-edge-on board: it fails. Piece scores saturate near
+      1.00 on people and background, and the board box itself comes back ten times
+      too large, so even the board gate cannot police it. Three guards below bound
+      the damage to something readable; none of them make it correct.
+
+  The honest fix for a new domain is a handful of annotated frames from it and a
+  fresh ``chesssight train calibrate`` -- or fine-tuning on it.
 """
 
 from __future__ import annotations
@@ -201,6 +209,72 @@ def draw_frame(
     return frame
 
 
+#: A complete chess set has 32 pieces, so no frame can legitimately contain more.
+#: This is a physical constraint, not a tuned threshold.
+MAX_PIECES = 32
+
+#: IoU above which two piece boxes are treated as the same detection. RT-DETR's
+#: one-to-one matching is *supposed* to make NMS unnecessary, and in-domain it does
+#: -- but out of domain it emits dozens of near-duplicate boxes per object, so the
+#: guarantee does not survive the domain shift.
+NMS_IOU = 0.55
+
+
+def suppress_overlaps(
+    detections: list[dict], *, iou_threshold: float = NMS_IOU
+) -> list[dict]:
+    """Class-agnostic greedy NMS over piece detections; the board passes through.
+
+    Class-agnostic rather than per-class on purpose: the duplicates seen out of
+    domain disagree about *class* as well as position -- one physical piece drawing
+    a "white knight" and a "white queen" box on the same pixels -- so per-class
+    suppression would keep both.
+    """
+    boards = [d for d in detections if d["label"] == BOARD_INDEX]
+    pieces = sorted(
+        (d for d in detections if d["label"] != BOARD_INDEX),
+        key=lambda d: float(d["score"]),
+        reverse=True,
+    )
+
+    kept: list[dict] = []
+    for candidate in pieces:
+        cx0, cy0, cx1, cy1 = candidate["box"]
+        area = max(0.0, cx1 - cx0) * max(0.0, cy1 - cy0)
+        duplicate = False
+        for accepted in kept:
+            ax0, ay0, ax1, ay1 = accepted["box"]
+            ix = max(0.0, min(cx1, ax1) - max(cx0, ax0))
+            iy = max(0.0, min(cy1, ay1) - max(cy0, ay0))
+            intersection = ix * iy
+            if intersection <= 0:
+                continue
+            other = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+            union = area + other - intersection
+            if union > 0 and intersection / union >= iou_threshold:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(candidate)
+    return kept + boards
+
+
+def cap_pieces(detections: list[dict], limit: int = MAX_PIECES) -> list[dict]:
+    """Keep at most ``limit`` piece detections, highest-scoring first.
+
+    A chess set has 32 pieces. Emitting 288 is not a borderline error to be tuned
+    away, it is impossible, so the count is bounded by the physics rather than by
+    a confidence threshold that has already been shown to drift out of domain.
+    """
+    boards = [d for d in detections if d["label"] == BOARD_INDEX]
+    pieces = sorted(
+        (d for d in detections if d["label"] != BOARD_INDEX),
+        key=lambda d: float(d["score"]),
+        reverse=True,
+    )[:limit]
+    return pieces + boards
+
+
 #: How many consecutive detection passes a remembered board box survives without
 #: being re-confirmed. A one-frame flicker must not open the gate, but a *stale*
 #: box is worse than none: after a scene cut it belongs to a different shot and
@@ -256,10 +330,14 @@ def gate_to_board(
     dx, dy = (x1 - x0) * margin, (y1 - y0) * margin
     x0, y0, x1, y1 = x0 - dx, y0 - dy, x1 + dx, y1 + dy
 
-    kept = []
+    # Only the selected board survives: drawing every candidate implies the model
+    # found several boards, when in fact one was chosen and the rest discarded.
+    chosen = dict(best) if boards else None
+    if chosen is not None:
+        chosen["box"] = list(last_board)
+    kept = [chosen] if chosen is not None else []
     for detection in detections:
         if detection["label"] == BOARD_INDEX:
-            kept.append(detection)
             continue
         bx0, _, bx1, by1 = detection["box"]
         foot_x = (bx0 + bx1) / 2.0
@@ -277,6 +355,7 @@ def annotate_video(
     top_k: int | None = None,
     stride: int = 1,
     board_gate: bool = True,
+    max_pieces: int = MAX_PIECES,
     max_seconds: float | None = None,
     device: str | None = None,
     progress=print,
@@ -324,10 +403,12 @@ def annotate_video(
                     top_k=top_k,
                     calibration=calibration,
                 )
+                detections = suppress_overlaps(detections)
                 if board_gate:
                     detections, last_board, board_age = gate_to_board(
                         detections, last_board, age=board_age
                     )
+                detections = cap_pieces(detections, max_pieces)
             pieces = sum(1 for d in detections if d["label"] != BOARD_INDEX)
             counts.append(pieces)
             has_board = any(d["label"] == BOARD_INDEX for d in detections)

@@ -943,6 +943,14 @@ def train_video(
             "so this removes most out-of-domain false positives for free.",
         ),
     ] = True,
+    max_pieces: Annotated[
+        int,
+        typer.Option(
+            "--max-pieces",
+            help="Hard cap on pieces per frame. A chess set has 32, so more than "
+            "that is impossible rather than merely unlikely.",
+        ),
+    ] = 32,
     max_seconds: Annotated[float | None, typer.Option("--max-seconds")] = None,
     device: Annotated[str | None, typer.Option("--device")] = None,
 ) -> None:
@@ -961,6 +969,7 @@ def train_video(
         top_k=top_k,
         stride=max(1, stride),
         board_gate=board_gate,
+        max_pieces=max_pieces,
         max_seconds=max_seconds,
         device=device,
         progress=typer.echo,

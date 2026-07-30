@@ -175,3 +175,97 @@ class TestBoardGate:
         kept, remembered, _ = gate_to_board(detections, None)
         assert kept == detections
         assert remembered is None
+
+
+class TestSuppressionAndCap:
+    """Bounding the out-of-domain failure with geometry and physics."""
+
+    @staticmethod
+    def piece(x0, y0, x1, y1, score, name="white_pawn", label=0):
+        return {"label": label, "name": name, "score": score, "box": [x0, y0, x1, y1]}
+
+    def test_duplicate_boxes_collapse_to_the_best(self):
+        from chesssight.train.video import suppress_overlaps
+
+        detections = [
+            self.piece(100, 100, 140, 200, 0.9),
+            self.piece(102, 103, 141, 201, 0.7),  # same object, lower score
+            self.piece(400, 100, 440, 200, 0.8),  # a different object
+        ]
+        kept = suppress_overlaps(detections)
+        assert len(kept) == 2
+        assert {d["score"] for d in kept} == {0.9, 0.8}
+
+    def test_suppression_is_class_agnostic(self):
+        # Out of domain one physical piece draws boxes that disagree about class;
+        # per-class NMS would keep both, so suppression ignores the label.
+        from chesssight.train.video import suppress_overlaps
+
+        detections = [
+            self.piece(100, 100, 140, 200, 0.9, "white_knight", 1),
+            self.piece(101, 101, 141, 201, 0.85, "white_queen", 4),
+        ]
+        assert len(suppress_overlaps(detections)) == 1
+
+    def test_board_is_never_suppressed(self):
+        from chesssight.train.labels import BOARD_INDEX
+        from chesssight.train.video import suppress_overlaps
+
+        board = {
+            "label": BOARD_INDEX,
+            "name": "board",
+            "score": 0.99,
+            "box": [0, 0, 500, 500],
+        }
+        # The board overlaps every piece; it must survive regardless.
+        kept = suppress_overlaps([board, self.piece(100, 100, 140, 200, 0.9)])
+        assert any(d["label"] == BOARD_INDEX for d in kept)
+        assert len(kept) == 2
+
+    def test_cap_enforces_a_full_chess_set(self):
+        from chesssight.train.video import MAX_PIECES, cap_pieces
+
+        detections = [
+            self.piece(i * 10, 0, i * 10 + 5, 20, score=i / 100.0) for i in range(90)
+        ]
+        kept = cap_pieces(detections)
+        assert len(kept) == MAX_PIECES == 32
+        # Highest-scoring survive, so ranking decides which 32.
+        assert min(d["score"] for d in kept) > 0.5
+
+    def test_cap_keeps_the_board_outside_the_budget(self):
+        from chesssight.train.labels import BOARD_INDEX
+        from chesssight.train.video import cap_pieces
+
+        board = {
+            "label": BOARD_INDEX,
+            "name": "board",
+            "score": 0.5,
+            "box": [0, 0, 10, 10],
+        }
+        detections = [board] + [
+            self.piece(i * 10, 0, i * 10 + 5, 20, 0.9) for i in range(40)
+        ]
+        kept = cap_pieces(detections)
+        assert sum(1 for d in kept if d["label"] != BOARD_INDEX) == 32
+        assert sum(1 for d in kept if d["label"] == BOARD_INDEX) == 1
+
+    def test_only_one_board_survives_the_gate(self):
+        from chesssight.train.labels import BOARD_INDEX
+        from chesssight.train.video import gate_to_board
+
+        def board(x0, y0, x1, y1, score):
+            return {
+                "label": BOARD_INDEX,
+                "name": "board",
+                "score": score,
+                "box": [x0, y0, x1, y1],
+            }
+
+        detections = [
+            board(0, 0, 40, 100, 0.99),
+            board(100, 100, 500, 400, 0.60),
+            self.piece(200, 200, 240, 300, 0.9),
+        ]
+        kept, _, _ = gate_to_board(detections, None)
+        assert sum(1 for d in kept if d["label"] == BOARD_INDEX) == 1
