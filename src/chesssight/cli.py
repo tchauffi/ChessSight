@@ -934,6 +934,15 @@ def train_video(
             help="Detect every Nth frame, redrawing between. 2-3 is fine hand-held.",
         ),
     ] = 1,
+    board_gate: Annotated[
+        bool,
+        typer.Option(
+            "--board-gate/--no-board-gate",
+            help="Keep only pieces standing on the detected board. The board "
+            "detection transfers to new domains far better than piece scores, "
+            "so this removes most out-of-domain false positives for free.",
+        ),
+    ] = True,
     max_seconds: Annotated[float | None, typer.Option("--max-seconds")] = None,
     device: Annotated[str | None, typer.Option("--device")] = None,
 ) -> None:
@@ -951,6 +960,7 @@ def train_video(
         threshold=threshold,
         top_k=top_k,
         stride=max(1, stride),
+        board_gate=board_gate,
         max_seconds=max_seconds,
         device=device,
         progress=typer.echo,

@@ -10,9 +10,11 @@ Two honest limitations, stated rather than hidden:
   so there is no homography and no per-square position readout on video. What this
   shows is detection: which pieces, where, how confidently.
 * The calibration was fit on ChessReD's photographs. On a different piece set,
-  board or lighting, the ranking usually survives while the absolute scores drift;
-  if everything comes out below threshold, rerun with ``--top-k`` to see the
-  ranking, and consider calibrating on a few annotated frames of your own domain.
+  board or lighting, the ranking usually survives while the absolute scores drift --
+  measured on stock footage the drift went *upward*, flooding the threshold with
+  false positives. The board gate removes most of them (the board detection
+  transfers far better than piece scores), and ``--top-k`` falls back to ranking;
+  for real use on a new domain, calibrate on a few annotated frames of it.
 """
 
 from __future__ import annotations
@@ -199,6 +201,73 @@ def draw_frame(
     return frame
 
 
+#: How many consecutive detection passes a remembered board box survives without
+#: being re-confirmed. A one-frame flicker must not open the gate, but a *stale*
+#: box is worse than none: after a scene cut it belongs to a different shot and
+#: silently gates out every legitimate piece.
+BOARD_MEMORY = 12
+
+
+def gate_to_board(
+    detections: list[dict],
+    last_board: list[float] | None,
+    *,
+    margin: float = 0.15,
+    age: int = 0,
+) -> tuple[list[dict], list[float] | None, int]:
+    """Drop piece detections that do not stand on the detected board.
+
+    Out of domain, piece scores drift and boxes land on people and furniture --
+    but the *board* detection stays reliable well past the point piece scores
+    break down. Requiring each piece's foot to fall inside the board box (grown
+    by ``margin``) uses the model's own most-transferable output to police its
+    least-transferable one. No ground truth involved.
+
+    Returns the surviving detections, the board box to remember, and its age.
+    """
+    boards = [d for d in detections if d["label"] == BOARD_INDEX]
+    if boards:
+        # Choose the board that explains the pieces, not the one with the best
+        # score. The model sometimes emits a confident sliver of a board box, and
+        # score-based selection then gates every legitimate piece out -- observed
+        # dropping 19 of 23 detections on one frame. A piece-vote is
+        # self-consistent: feet standing inside a candidate are evidence for it.
+        feet = [
+            ((d["box"][0] + d["box"][2]) / 2.0, d["box"][3])
+            for d in detections
+            if d["label"] != BOARD_INDEX
+        ]
+
+        def votes(candidate: dict) -> int:
+            cx0, cy0, cx1, cy1 = candidate["box"]
+            return sum(1 for fx, fy in feet if cx0 <= fx <= cx1 and cy0 <= fy <= cy1)
+
+        best = max(boards, key=lambda d: (votes(d), d["score"]))
+        last_board = list(best["box"])
+        age = 0
+    else:
+        age += 1
+        if age > BOARD_MEMORY:
+            last_board = None
+    if last_board is None:
+        return detections, None, age
+
+    x0, y0, x1, y1 = last_board
+    dx, dy = (x1 - x0) * margin, (y1 - y0) * margin
+    x0, y0, x1, y1 = x0 - dx, y0 - dy, x1 + dx, y1 + dy
+
+    kept = []
+    for detection in detections:
+        if detection["label"] == BOARD_INDEX:
+            kept.append(detection)
+            continue
+        bx0, _, bx1, by1 = detection["box"]
+        foot_x = (bx0 + bx1) / 2.0
+        if x0 <= foot_x <= x1 and y0 <= by1 <= y1:
+            kept.append(detection)
+    return kept, last_board, age
+
+
 def annotate_video(
     checkpoint: Path,
     source: Path,
@@ -207,6 +276,7 @@ def annotate_video(
     threshold: float | None = None,
     top_k: int | None = None,
     stride: int = 1,
+    board_gate: bool = True,
     max_seconds: float | None = None,
     device: str | None = None,
     progress=print,
@@ -237,6 +307,8 @@ def annotate_video(
     writer = FrameWriter(destination, info.width, info.height, info.fps)
     detections: list[dict] = []
     counts: list[int] = []
+    last_board: list[float] | None = None
+    board_age = 0
     started = time.monotonic()
     frame_index = 0
 
@@ -252,6 +324,10 @@ def annotate_video(
                     top_k=top_k,
                     calibration=calibration,
                 )
+                if board_gate:
+                    detections, last_board, board_age = gate_to_board(
+                        detections, last_board, age=board_age
+                    )
             pieces = sum(1 for d in detections if d["label"] != BOARD_INDEX)
             counts.append(pieces)
             has_board = any(d["label"] == BOARD_INDEX for d in detections)
