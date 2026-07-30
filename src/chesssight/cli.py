@@ -907,3 +907,55 @@ def train_calibrate(
         f"precision {result.precision:.3f}  recall {result.recall:.3f}  "
         f"F1 {result.f1:.3f}  ({result.detections_used} detections used)"
     )
+
+
+@train_app.command("video")
+def train_video(
+    checkpoint: Annotated[Path, typer.Argument(help="Saved checkpoint directory.")],
+    source: Annotated[Path, typer.Option("--input", "-i", help="Video to annotate.")],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Annotated video to write.")],
+    threshold: Annotated[
+        float | None,
+        typer.Option(
+            "--threshold",
+            help="Score floor; defaults to the checkpoint's calibrated one.",
+        ),
+    ] = None,
+    top_k: Annotated[
+        int | None,
+        typer.Option(
+            "--top-k", help="Draw the N best boxes per frame instead of thresholding."
+        ),
+    ] = None,
+    stride: Annotated[
+        int,
+        typer.Option(
+            "--stride",
+            help="Detect every Nth frame, redrawing between. 2-3 is fine hand-held.",
+        ),
+    ] = 1,
+    max_seconds: Annotated[float | None, typer.Option("--max-seconds")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Run the detector over a video and write an annotated copy.
+
+    Shows detection only: boxes, classes and calibrated confidences. A per-square
+    position readout needs the board corners, which the detector does not emit.
+    """
+    from chesssight.train.video import annotate_video
+
+    result = annotate_video(
+        Path(checkpoint),
+        Path(source),
+        Path(out),
+        threshold=threshold,
+        top_k=top_k,
+        stride=max(1, stride),
+        max_seconds=max_seconds,
+        device=device,
+        progress=typer.echo,
+    )
+    typer.echo(
+        f"wrote {result['output']}: {result['frames']} frames at "
+        f"{result['fps']:.1f} fps, mean {result['mean_pieces']:.1f} pieces/frame"
+    )
