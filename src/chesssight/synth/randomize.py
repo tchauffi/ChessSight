@@ -476,6 +476,7 @@ def resolve_scene(config: GeneratorConfig, rng: random.Random) -> ResolvedScene:
 
     return ResolvedScene(
         table_size=scene.table_size.sample(rng) * square_size,
+        table_thickness=scene.table_thickness.sample(rng) * square_size,
         table_color=_jitter_color(rng.choice(scene.table_color), rng, 0.05),
         table_roughness=scene.table_roughness.sample(rng),
         distractors=distractors,

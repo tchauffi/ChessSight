@@ -156,6 +156,7 @@ class Distractor(StrictModel):
 
 class ResolvedScene(StrictModel):
     table_size: float = Field(gt=0)
+    table_thickness: float = Field(gt=0)
     table_color: RGB
     table_roughness: float = Field(ge=0, le=1)
     distractors: list[Distractor]

@@ -72,27 +72,51 @@ def build_lighting(spec: dict) -> list[bpy.types.Object]:
     return created
 
 
+def _box(
+    name: str,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    z0: float,
+    z1: float,
+) -> bpy.types.Object:
+    """A closed axis-aligned box."""
+    vertices = [
+        (x, y, z) for z in (z0, z1) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+    ]
+    faces = [
+        (3, 2, 1, 0),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ]
+    return bl_utils.new_mesh_object(name, vertices, [], faces)
+
+
 def build_table(
     spec: dict, square_size: float, board_thickness: float
 ) -> bpy.types.Object:
-    """The surface the board rests on.
+    """The slab the board rests on.
 
     Placed exactly at the board's underside. A fixed offset leaves the board
     hovering by up to half a square once its thickness is randomised -- invisible
     from directly above, obvious at the low camera angles this dataset is full of,
     and it would leave captured pieces floating too.
+
+    A finite box rather than a bare quad: an edgeless table running to the horizon
+    is one of the clearest giveaways that an image was rendered, and the visible
+    edge is what separates the table from the floor beyond it.
     """
     from chesssight.blender.board import SLAB_GAP
 
     extent = spec["table_size"] / 2.0
     z = -(SLAB_GAP + board_thickness)
-    vertices = [
-        (-extent, -extent, z),
-        (extent, -extent, z),
-        (extent, extent, z),
-        (-extent, extent, z),
-    ]
-    table = bl_utils.new_mesh_object("Table", vertices, [], [(0, 1, 2, 3)])
+    table = _box(
+        "Table", -extent, extent, -extent, extent, z - spec["table_thickness"], z
+    )
     materials.assign(
         table,
         materials.wood(

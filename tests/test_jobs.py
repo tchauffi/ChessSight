@@ -262,6 +262,16 @@ class TestRandomization:
                 radius = math.hypot(distractor.location[0], distractor.location[1])
                 assert radius > half_board
 
+    def test_the_table_is_a_finite_slab(self):
+        # An edgeless table running to the horizon is one of the loudest CGI tells;
+        # the visible edge, with the HDRI room beyond it, is what real photos show.
+        config = make_config()
+        for index in range(10):
+            scene = randomize.resolve_scene(config, derive_rng(index, "scene"))
+            assert scene.table_thickness > 0
+            # ...and wide enough that the board plus captured pieces stay on it.
+            assert scene.table_size / 2.0 > BOARD_SIZE / 2.0 + 4.0
+
 
 class TestConfig:
     def test_yaml_round_trip(self, tmp_path: Path):

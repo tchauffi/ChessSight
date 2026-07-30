@@ -37,11 +37,13 @@ camera:
   f_stop: {min: 1.8, max: 11.0}
 
 lighting:
-  # Point hdri_dir at a directory of .hdr/.exr files to enable image-based lighting.
-  # Without it the procedural sun-plus-fills setup is used, so the pipeline works
-  # with no external assets.
-  hdri_dir: null
-  hdri_probability: 0.5
+  # A directory of .hdr/.exr files (fetch with `chesssight assets hdri`). Every
+  # scene is lit by -- and backed by -- one of the maps: a real room behind the
+  # table is the single biggest realism win over a flat-colour void. If the
+  # directory is missing the generator falls back to the procedural sun rig, so
+  # the pipeline still works with no external assets.
+  hdri_dir: ~/assets/chesssight/hdri
+  hdri_probability: 1.0
   # An HDRI is the *only* light when one is used: the procedural sun and fills are
   # suppressed, since adding them on top triple-lights the scene and erases the
   # lighting character the map was chosen for. It also gets its own, much narrower
@@ -56,7 +58,12 @@ lighting:
   lamp_energy: {min: 1500.0, max: 12000.0}
 
 pieces:
-  provider: procedural
+  # The baked Staunton OBJ set (see `chesssight assets bake`). Unlike the HDRI dir
+  # there is no silent fallback here -- a missing manifest is an error -- so switch
+  # provider back to `procedural` (and drop asset_manifest) on a machine without
+  # the baked assets.
+  provider: uppachess-staunton
+  asset_manifest: assets/baked/manifest.json
   height_scale: {min: 0.85, max: 1.15}
   radius_scale: {min: 0.85, max: 1.15}
   lathe_segments: {min: 16, max: 48}
@@ -64,6 +71,9 @@ pieces:
   tipped_probability: 0.02
 
 scene:
+  # A finite slab with a visible edge, so the HDRI room shows beyond the table
+  # instead of the table running to the horizon.
+  table_thickness: {min: 0.4, max: 1.0}
   distractor_probability: 0.3
   distractor_count: {min: 0, max: 3}
 

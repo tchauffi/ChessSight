@@ -126,18 +126,23 @@ The procedural sun-plus-fills rig makes clean, directional, physically simple li
 real room does not: it throws colour off painted walls, soft gradients through windows,
 several mismatched fixtures, and reflections that land differently on every curved
 piece. That difference is exactly the kind of cue a classifier latches onto, so the
-generator can light scenes with real captured environments instead.
+generator lights scenes with real captured environments instead — which also puts a
+real, varied room *behind* the table, instead of the flat-colour void that most loudly
+says "render".
 
 ```bash
 uv run chesssight assets hdri ~/assets/chesssight/hdri     # ~22 curated maps at 2k
 ```
 
-Then point the config at the directory:
+The checked-in configs already point at that directory with `hdri_probability: 1.0`;
+if the directory is missing, the generator silently falls back to the procedural rig,
+so the pipeline still works with no external assets. Dial the probability down to mix
+the procedural world back in:
 
 ```yaml
 lighting:
   hdri_dir: ~/assets/chesssight/hdri
-  hdri_probability: 0.5      # the rest of the run uses the procedural rig
+  hdri_probability: 1.0      # below 1.0, the rest uses the procedural rig
 ```
 
 The maps come from [Poly Haven](https://polyhaven.com/hdris) and are **CC0** — the one

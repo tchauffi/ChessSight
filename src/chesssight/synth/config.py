@@ -110,7 +110,11 @@ class LightingConfig(StrictModel):
     """World and lamp randomisation."""
 
     hdri_dir: Path | None = None
-    hdri_probability: Probability = 0.5
+    #: With a directory configured, every scene defaults to an HDRI environment: a
+    #: real room behind the table is the single biggest realism win over a flat
+    #: colour, and the flat-colour rig remains only as the no-assets fallback. Dial
+    #: this down to mix the procedural world back in.
+    hdri_probability: Probability = 1.0
     hdri_rotation_deg: FloatRange = FloatRange(min=0.0, max=360.0)
     #: Multiplier on a flat-colour world, which carries no absolute scale.
     world_strength: FloatRange = FloatRange(min=0.3, max=2.5)
@@ -205,6 +209,11 @@ class SceneConfig(StrictModel):
     """Surroundings: table, backdrop and clutter."""
 
     table_size: FloatRange = FloatRange(min=20.0, max=45.0)
+    #: Slab thickness of the tabletop, in squares. The table used to be an infinite
+    #: plane, and an edgeless table filling the frame to the horizon is one of the
+    #: things that most loudly says "render" -- every real photo shows the table
+    #: *ending* somewhere.
+    table_thickness: FloatRange = FloatRange(min=0.4, max=1.0)
     table_color: list[RGB] = [
         [0.25, 0.16, 0.10],
         [0.55, 0.52, 0.48],
