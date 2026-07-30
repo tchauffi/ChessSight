@@ -327,6 +327,100 @@ class TestSamplerAssembly:
         assert len(sampler.samplers) == 2  # type: ignore[attr-defined]
 
 
+class TestPieceSets:
+    """Several chess sets in one dataset, drawn per scene."""
+
+    def test_a_single_provider_needs_no_set_list(self):
+        pieces = GeneratorConfig().pieces
+        provider, manifest = randomize.choose_piece_set(pieces, derive_rng(0, "set"))
+        assert provider == "procedural"
+        assert manifest is None
+
+    def test_the_set_list_takes_precedence_over_the_single_provider(self):
+        config = make_config(
+            pieces={
+                "provider": "procedural",
+                "sets": [{"provider": "other-set", "asset_manifest": "/tmp/m.json"}],
+            }
+        )
+        provider, manifest = randomize.choose_piece_set(
+            config.pieces, derive_rng(0, "set")
+        )
+        assert provider == "other-set"
+        assert manifest == Path("/tmp/m.json")
+
+    def test_every_configured_set_is_actually_drawn(self):
+        # The point of the feature is a *mixed* dataset; a weighting that silently
+        # never reached one of the sets would look identical to a single-set run.
+        config = make_config(
+            pieces={
+                "sets": [
+                    {"provider": "alpha", "weight": 1.0},
+                    {"provider": "beta", "weight": 1.0},
+                ]
+            }
+        )
+        drawn = {
+            randomize.choose_piece_set(config.pieces, derive_rng(index, "set"))[0]
+            for index in range(60)
+        }
+        assert drawn == {"alpha", "beta"}
+
+    def test_weights_shift_the_mix(self):
+        config = make_config(
+            pieces={
+                "sets": [
+                    {"provider": "common", "weight": 9.0},
+                    {"provider": "rare", "weight": 1.0},
+                ]
+            }
+        )
+        draws = [
+            randomize.choose_piece_set(config.pieces, derive_rng(index, "set"))[0]
+            for index in range(400)
+        ]
+        assert 0.75 < draws.count("common") / len(draws) < 0.98
+
+    def test_the_chosen_set_reaches_the_job_spec(self, writer: DatasetWriter):
+        config = make_config(
+            count=8,
+            pieces={
+                "sets": [
+                    {"provider": "alpha", "asset_manifest": "/tmp/a.json"},
+                    {"provider": "beta", "asset_manifest": "/tmp/b.json"},
+                ]
+            },
+        )
+        specs = list(jobs.iter_jobs(config, writer))
+        seen = {(spec.pieces.provider, spec.pieces.asset_manifest) for spec in specs}
+        # Whatever the draw, provider and manifest must travel together -- a spec
+        # naming one set and loading another's geometry would mislabel nothing but
+        # would render the wrong pieces.
+        assert seen <= {("alpha", "/tmp/a.json"), ("beta", "/tmp/b.json")}
+
+    def test_taper_varies_between_scenes_and_stays_in_range(
+        self, writer: DatasetWriter
+    ):
+        config = make_config(count=30)
+        tapers = {spec.pieces.taper for spec in jobs.iter_jobs(config, writer)}
+        assert len(tapers) > 1
+        assert all(
+            config.pieces.taper.min <= taper <= config.pieces.taper.max
+            for taper in tapers
+        )
+
+    def test_scaling_that_would_overflow_a_square_is_rejected(self):
+        with pytest.raises(ValueError, match="overflows its square"):
+            GeneratorConfig.model_validate(
+                {
+                    "pieces": {
+                        "radius_scale": {"min": 1.0, "max": 1.3},
+                        "taper": {"min": -0.2, "max": 0.2},
+                    }
+                }
+            )
+
+
 class TestCapturedPieces:
     """Pieces beside the board, as a real game in progress accumulates."""
 

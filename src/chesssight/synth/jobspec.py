@@ -135,6 +135,9 @@ class ResolvedPieces(StrictModel):
     asset_manifest: str | None = None
     height_scale: float = Field(gt=0)
     radius_scale: float = Field(gt=0)
+    #: Silhouette warp for procedural sets: positive widens the base and narrows the
+    #: top. Bounded so ``1 + |taper|`` cannot push a piece outside its square.
+    taper: float = Field(default=0.0, gt=-1.0, lt=1.0)
     bevel_width: float = Field(ge=0)
     lathe_segments: int = Field(ge=3)
     white_color: RGB

@@ -37,12 +37,14 @@ class PieceStyle:
         square_size: float = 1.0,
         height_scale: float = 1.0,
         radius_scale: float = 1.0,
+        taper: float = 0.0,
         bevel_width: float = 0.006,
         lathe_segments: int = 32,
     ) -> None:
         self.square_size = square_size
         self.height_scale = height_scale
         self.radius_scale = radius_scale
+        self.taper = taper
         self.bevel_width = bevel_width
         self.lathe_segments = lathe_segments
 
@@ -52,6 +54,7 @@ class PieceStyle:
             square_size=square_size,
             height_scale=spec["height_scale"],
             radius_scale=spec["radius_scale"],
+            taper=spec.get("taper", 0.0),
             bevel_width=spec["bevel_width"],
             lathe_segments=spec["lathe_segments"],
         )
@@ -61,9 +64,25 @@ class PieceStyle:
             letter, square_size=self.square_size, height_scale=self.height_scale
         )
 
+    def top_radius_scale(self, letter: str) -> float:
+        """Radius scale at the top of the turned part.
+
+        The additive geometry -- the rook's merlons, the knight's head -- stands on
+        the last lathe ring, so it has to shrink and grow with that ring rather than
+        with the piece's overall size. At ``z = PROFILE_TOP`` the taper factor is
+        exactly ``1 - taper``; ignoring it leaves merlons jutting into space on a
+        base-heavy set.
+        """
+        return self.radius_scale * profiles.taper_factor(
+            letter, profiles.PROFILE_TOP[letter], self.taper
+        )
+
     def radius(self, letter: str) -> float:
         return profiles.piece_radius(
-            letter, square_size=self.square_size, radius_scale=self.radius_scale
+            letter,
+            square_size=self.square_size,
+            radius_scale=self.radius_scale,
+            taper=self.taper,
         )
 
 
@@ -174,7 +193,7 @@ def _add_rook_crenellations(
     they read as part of the tower. Making them thicker than the wall -- or centring
     them on the outer radius -- leaves them jutting into space.
     """
-    scale = style.square_size * style.radius_scale
+    scale = style.square_size * style.top_radius_scale("R")
     height = style.height("R")
     rim_z = profiles.PROFILE_TOP["R"] * height
     merlon_height = height - rim_z
@@ -388,7 +407,7 @@ def _add_knight_head(
     horse-like profile from every direction the camera might look from.
     """
     height = style.height("N")
-    scale = style.square_size * style.radius_scale
+    scale = style.square_size * style.top_radius_scale("N")
     neck_z = profiles.PROFILE_TOP["N"] * height
     span = height - neck_z
 
@@ -446,6 +465,7 @@ class ProceduralProvider:
             square_size=style.square_size,
             height_scale=style.height_scale,
             radius_scale=style.radius_scale,
+            taper=style.taper,
         )
         obj = _lathe(f"Piece_{letter}", profile, style)
 

@@ -223,23 +223,45 @@ def validate_profile(letter: str, profile: Profile) -> None:
             )
 
 
+def taper_factor(letter: str, z: float, taper: float) -> float:
+    """Radius multiplier at profile height ``z``, for a silhouette ``taper``.
+
+    ``height_scale`` and ``radius_scale`` change how big a set is, not what shape it
+    is: scaled uniformly, every procedural set has the same outline, and a detector
+    can learn that one outline instead of learning what a bishop is. ``taper``
+    redistributes radius along the piece instead -- ``+t`` widens the base and narrows
+    the top by the same fraction, ``-t`` does the reverse, giving squat and slender
+    variants of the same set. Normalising by :data:`PROFILE_TOP` makes ``1 + t`` the
+    factor at the base and ``1 - t`` at the top of the turned part for every letter,
+    whether or not non-lathe geometry finishes it off.
+
+    The factor never exceeds ``1 + |taper|``, which is what bounds the widened base
+    inside its square -- see :func:`chesssight.synth.config.PiecesConfig`.
+    """
+    return 1.0 + taper * (1.0 - 2.0 * z / PROFILE_TOP[letter])
+
+
 def scaled_profile(
     letter: str,
     *,
     square_size: float = 1.0,
     height_scale: float = 1.0,
     radius_scale: float = 1.0,
+    taper: float = 0.0,
 ) -> list[tuple[float, float]]:
     """Return the profile in world units, ready to be swept.
 
-    ``height_scale`` and ``radius_scale`` are the per-scene style jitter: applying
-    them once per scene keeps every piece in an image looking like one set.
+    ``height_scale``, ``radius_scale`` and ``taper`` are the per-scene style jitter:
+    applying them once per scene keeps every piece in an image looking like one set.
     """
     if letter not in PROFILES:
         raise ProfileError(f"unknown piece letter {letter!r}")
     height = PIECE_HEIGHTS[letter] * square_size * height_scale
     return [
-        (radius * square_size * radius_scale, z * height)
+        (
+            radius * square_size * radius_scale * taper_factor(letter, z, taper),
+            z * height,
+        )
         for radius, z in PROFILES[letter]
     ]
 
@@ -254,12 +276,26 @@ def piece_height(
 
 
 def piece_radius(
-    letter: str, *, square_size: float = 1.0, radius_scale: float = 1.0
+    letter: str,
+    *,
+    square_size: float = 1.0,
+    radius_scale: float = 1.0,
+    taper: float = 0.0,
 ) -> float:
-    """Largest radius of a piece in world units."""
+    """Largest radius of a piece in world units.
+
+    Measured over the warped profile rather than from :data:`MAX_RADII`, because a
+    taper moves *which* point is widest: the additive geometry sized against this
+    (the rook rim, the knight's pedestal) has to match the lathe it sits on.
+    """
     if letter not in MAX_RADII:
         raise ProfileError(f"unknown piece letter {letter!r}")
-    return MAX_RADII[letter] * square_size * radius_scale
+    if taper == 0.0:
+        return MAX_RADII[letter] * square_size * radius_scale
+    widest = max(
+        radius * taper_factor(letter, z, taper) for radius, z in PROFILES[letter]
+    )
+    return widest * square_size * radius_scale
 
 
 def validate_all() -> None:

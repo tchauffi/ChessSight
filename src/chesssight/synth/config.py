@@ -164,6 +164,17 @@ class BoardConfig(StrictModel):
     color_jitter: FloatRange = FloatRange(min=-0.18, max=0.18)
 
 
+class PieceSetChoice(StrictModel):
+    """One chess set the generator may draw from, and how often to draw it."""
+
+    provider: str
+    #: Path to an external chess-set manifest (see `chesssight assets --help`).
+    #: When set, `provider` should be the manifest's own name.
+    asset_manifest: Path | None = None
+    #: Relative weight, normalised against the other entries.
+    weight: float = Field(default=1.0, gt=0.0)
+
+
 class PiecesConfig(StrictModel):
     """Procedural piece style and placement randomisation."""
 
@@ -171,9 +182,20 @@ class PiecesConfig(StrictModel):
     #: Path to an external chess-set manifest (see `chesssight assets --help`).
     #: When set, `provider` should be the manifest's own name.
     asset_manifest: Path | None = None
+    #: Several sets, one drawn per scene, instead of the single `provider` above.
+    #: Real chess sets differ in silhouette far more than in size, and a dataset
+    #: rendered from one set lets a detector key on that set's outline -- which is
+    #: exactly the cue that does not transfer to a photograph of someone else's
+    #: board. When non-empty this takes precedence over `provider`.
+    sets: list[PieceSetChoice] = Field(default_factory=list)
     #: Multiplies every profile height, applied once per scene so a set is coherent.
     height_scale: FloatRange = FloatRange(min=0.85, max=1.15)
     radius_scale: FloatRange = FloatRange(min=0.85, max=1.15)
+    #: Redistributes radius along each piece -- positive widens the base and narrows
+    #: the top, negative the reverse -- so the procedural set spans squat through
+    #: slender variants rather than a single fixed outline. Procedural sets only;
+    #: imported geometry is used as authored.
+    taper: FloatRange = FloatRange(min=-0.12, max=0.12)
     bevel_width: FloatRange = FloatRange(min=0.002, max=0.012)
     lathe_segments: IntRange = IntRange(min=16, max=48)
     white_color: RGB = [0.90, 0.87, 0.80]
@@ -203,6 +225,28 @@ class PiecesConfig(StrictModel):
     captured_spacing: FloatRange = FloatRange(min=0.55, max=0.85)
     #: Pieces off the board are handled casually and often end up on their side.
     captured_lying_probability: Probability = 0.25
+
+    @model_validator(mode="after")
+    def _check_pieces_fit_their_square(self) -> Self:
+        """Reject scaling that would let the widest piece overflow its square.
+
+        Enlarging and tapering both push radius outward, and they multiply, so
+        neither range is safe to judge on its own. The consequence of getting it
+        wrong is not a crash but touching pieces -- a silently wrong dataset -- so
+        it is worth failing at config-load time.
+        """
+        from chesssight.synth.profiles import MAX_RADII
+
+        widest = max(MAX_RADII.values())
+        widest_taper = max(abs(self.taper.min), abs(self.taper.max))
+        worst = widest * self.radius_scale.max * (1.0 + widest_taper)
+        if worst >= 0.5:
+            raise ValueError(
+                f"radius_scale.max {self.radius_scale.max} with taper "
+                f"+-{widest_taper} takes the widest piece to {worst:.3f} squares, "
+                f"which overflows its square (limit 0.5)"
+            )
+        return self
 
 
 class SceneConfig(StrictModel):

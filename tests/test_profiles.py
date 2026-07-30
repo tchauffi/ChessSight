@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from chesssight.synth import profiles
+from chesssight.synth.config import PiecesConfig
 
 
 def test_all_builtin_profiles_are_valid():
@@ -75,6 +76,80 @@ class TestScaling:
         assert profiles.piece_height("K", square_size=3.0) == pytest.approx(
             profiles.PIECE_HEIGHTS["K"] * 3.0
         )
+
+
+class TestTaper:
+    """The silhouette warp that gives the procedural set more than one outline."""
+
+    @pytest.mark.parametrize("letter", list(profiles.PIECE_LETTERS))
+    def test_no_taper_leaves_the_profile_untouched(self, letter: str):
+        plain = profiles.scaled_profile(letter)
+        untapered = profiles.scaled_profile(letter, taper=0.0)
+        assert plain == untapered
+
+    @pytest.mark.parametrize("letter", list(profiles.PIECE_LETTERS))
+    def test_the_factor_is_symmetric_about_the_turned_part(self, letter: str):
+        # 1+t at the base, 1-t at the top of the turned part, for every letter --
+        # that is what makes one taper value mean the same shape change on all six.
+        assert profiles.taper_factor(letter, 0.0, 0.1) == pytest.approx(1.1)
+        assert profiles.taper_factor(
+            letter, profiles.PROFILE_TOP[letter], 0.1
+        ) == pytest.approx(0.9)
+
+    @pytest.mark.parametrize("letter", list(profiles.PIECE_LETTERS))
+    def test_positive_taper_widens_the_base_and_narrows_the_top(self, letter: str):
+        base = profiles.scaled_profile(letter)
+        squat = profiles.scaled_profile(letter, taper=0.12)
+        top = profiles.PROFILE_TOP[letter]
+        # Compare at matching profile points, since z is unchanged by a taper.
+        lower = [
+            (b[0], s[0])
+            for b, s, (_, z) in zip(base, squat, profiles.PROFILES[letter], strict=True)
+            if z < top * 0.5 and b[0] > 0
+        ]
+        upper = [
+            (b[0], s[0])
+            for b, s, (_, z) in zip(base, squat, profiles.PROFILES[letter], strict=True)
+            if z > top * 0.5 and b[0] > 0
+        ]
+        assert lower and upper
+        assert all(tapered > plain for plain, tapered in lower)
+        assert all(tapered < plain for plain, tapered in upper)
+
+    @pytest.mark.parametrize("letter", list(profiles.PIECE_LETTERS))
+    @pytest.mark.parametrize("taper", [-0.12, -0.05, 0.05, 0.12])
+    def test_a_tapered_profile_is_still_sweepable(self, letter: str, taper: float):
+        # A warp that broke the axis endpoints or turned a radius negative would
+        # sweep into an open, self-intersecting shell rather than a solid.
+        scaled = profiles.scaled_profile(letter, taper=taper)
+        assert scaled[0][0] == pytest.approx(0.0)
+        assert scaled[-1][0] == pytest.approx(0.0)
+        assert all(radius >= 0.0 for radius, _ in scaled)
+        turned_top = profiles.piece_height(letter) * profiles.PROFILE_TOP[letter]
+        assert max(z for _, z in scaled) == pytest.approx(turned_top)
+
+    @pytest.mark.parametrize("letter", list(profiles.PIECE_LETTERS))
+    @pytest.mark.parametrize("taper", [-0.12, 0.0, 0.12])
+    def test_piece_radius_reports_the_widest_point_of_the_warped_profile(
+        self, letter: str, taper: float
+    ):
+        scaled = profiles.scaled_profile(letter, taper=taper)
+        assert profiles.piece_radius(letter, taper=taper) == pytest.approx(
+            max(radius for radius, _ in scaled)
+        )
+
+    @pytest.mark.parametrize("letter", list(profiles.PIECE_LETTERS))
+    def test_the_widest_configured_piece_still_fits_its_square(self, letter: str):
+        # The real invariant behind the taper bound: enlarging and tapering multiply,
+        # and two pieces that touch make the dataset quietly wrong rather than loud.
+        pieces = PiecesConfig()
+        worst = max(
+            profiles.piece_radius(
+                letter, radius_scale=pieces.radius_scale.max, taper=taper
+            )
+            for taper in (pieces.taper.min, pieces.taper.max)
+        )
+        assert worst < 0.5
 
 
 class TestValidation:

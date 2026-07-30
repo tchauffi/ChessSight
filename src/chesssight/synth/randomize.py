@@ -19,7 +19,7 @@ from chesssight.data.fen import (
     iter_occupied,
 )
 from chesssight.synth import profiles
-from chesssight.synth.config import GeneratorConfig
+from chesssight.synth.config import GeneratorConfig, PiecesConfig
 from chesssight.synth.jobspec import (
     CapturedPlacement,
     Distractor,
@@ -312,6 +312,22 @@ def resolve_board(config: GeneratorConfig, rng: random.Random) -> ResolvedBoard:
     )
 
 
+def choose_piece_set(
+    pieces: PiecesConfig, rng: random.Random
+) -> tuple[str, Path | None]:
+    """Pick the chess set for one scene: ``(provider, asset_manifest)``.
+
+    Drawn per scene rather than per run, so a single dataset mixes sets. The
+    single-``provider`` form stays valid and is what a config without ``sets`` means.
+    """
+    if not pieces.sets:
+        return pieces.provider, pieces.asset_manifest
+    (chosen,) = rng.choices(
+        pieces.sets, weights=[choice.weight for choice in pieces.sets], k=1
+    )
+    return chosen.provider, chosen.asset_manifest
+
+
 def resolve_pieces(
     config: GeneratorConfig, grid: Grid, rng: random.Random
 ) -> ResolvedPieces:
@@ -340,15 +356,14 @@ def resolve_pieces(
         config, grid, rng, first_instance_id=len(placements) + 1
     )
 
+    provider, manifest = choose_piece_set(pieces, rng)
+
     return ResolvedPieces(
-        provider=pieces.provider,
-        asset_manifest=(
-            str(Path(pieces.asset_manifest).expanduser())
-            if pieces.asset_manifest
-            else None
-        ),
+        provider=provider,
+        asset_manifest=str(Path(manifest).expanduser()) if manifest else None,
         height_scale=pieces.height_scale.sample(rng),
         radius_scale=pieces.radius_scale.sample(rng),
+        taper=pieces.taper.sample(rng),
         bevel_width=pieces.bevel_width.sample(rng),
         lathe_segments=pieces.lathe_segments.sample(rng),
         white_color=_jitter_color(pieces.white_color, rng, 0.05),

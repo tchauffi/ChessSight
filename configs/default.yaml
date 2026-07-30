@@ -58,14 +58,22 @@ lighting:
   lamp_energy: {min: 1500.0, max: 12000.0}
 
 pieces:
-  # The baked Staunton OBJ set (see `chesssight assets bake`). Unlike the HDRI dir
-  # there is no silent fallback here -- a missing manifest is an error -- so switch
-  # provider back to `procedural` (and drop asset_manifest) on a machine without
-  # the baked assets.
-  provider: uppachess-staunton
-  asset_manifest: assets/baked/manifest.json
+  # Two sets, drawn per scene. Real boards differ in silhouette far more than in
+  # size, and a dataset rendered from a single set lets the detector key on that
+  # set's outline -- a cue that does not survive contact with a photo of someone
+  # else's board. The baked Staunton OBJ set (see `chesssight assets bake`) has no
+  # silent fallback: a missing manifest is an error, so drop that entry on a
+  # machine without the baked assets and the procedural one still works alone.
+  sets:
+    - {provider: uppachess-staunton, asset_manifest: assets/baked/manifest.json, weight: 0.6}
+    - {provider: procedural, weight: 0.4}
   height_scale: {min: 0.85, max: 1.15}
   radius_scale: {min: 0.85, max: 1.15}
+  # Shape variation *within* the procedural set: positive widens the base and
+  # narrows the top, so it spans squat through slender rather than one fixed
+  # outline. Bounded jointly with radius_scale so a flared base cannot overflow
+  # its square -- the config rejects a combination that would.
+  taper: {min: -0.12, max: 0.12}
   lathe_segments: {min: 16, max: 48}
   position_jitter: {min: -0.16, max: 0.16}
   tipped_probability: 0.02

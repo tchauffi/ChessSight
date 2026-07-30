@@ -3,8 +3,8 @@
 #
 #   uv run chesssight synth run -c configs/sample.yaml -w 2
 #
-# Uses the baked Staunton set. Swap `pieces` back to `provider: procedural` (and drop
-# `asset_manifest`) for the dependency-free path.
+# Mixes the baked Staunton set with the procedural one. Drop the Staunton entry
+# under `pieces.sets` for the dependency-free path.
 count: 200
 master_seed: 20260729
 
@@ -50,8 +50,12 @@ board:
   color_jitter: {min: -0.18, max: 0.18}
 
 pieces:
-  provider: uppachess-staunton
-  asset_manifest: assets/baked/manifest.json
+  # Both sets, drawn per scene, so a sample run shows the shape spread the full
+  # dataset has. Drop the Staunton entry to run without the baked assets.
+  sets:
+    - {provider: uppachess-staunton, asset_manifest: assets/baked/manifest.json, weight: 0.6}
+    - {provider: procedural, weight: 0.4}
+  taper: {min: -0.12, max: 0.12}
   height_scale: {min: 0.92, max: 1.08}
   radius_scale: {min: 0.92, max: 1.08}
   position_jitter: {min: -0.16, max: 0.16}
