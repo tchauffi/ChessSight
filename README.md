@@ -108,6 +108,26 @@ visible defect an imported set can have.
 working manifest — a correctly-oriented reference to compare against when adapting a
 download.
 
+**Use more than one.** Scaling a set up and down does not change its outline, so a
+dataset rendered from a single set lets the detector learn *that set's silhouette*
+instead of learning what a bishop is — and that is precisely the cue that fails on a
+photograph of somebody else's board. `pieces.sets` is a weighted list, drawn per image:
+
+```yaml
+pieces:
+  sets:
+    - {provider: uppachess-staunton, asset_manifest: assets/baked/manifest.json, weight: 0.6}
+    - {provider: procedural, weight: 0.4}
+  taper: {min: -0.12, max: 0.12}
+```
+
+`taper` varies the shape *within* the procedural set: positive widens the base and
+narrows the top, negative the reverse, so it spans squat through slender rather than
+one fixed profile. It is bounded jointly with `radius_scale` — enlarging and tapering
+multiply, and a flared base that overflowed its square would leave pieces touching,
+which is a quietly wrong dataset rather than a crash. The config rejects a combination
+that would, at load time.
+
 **Bake before rendering at scale.** Importing a print-ready set costs far more than
 rendering it — a Staunton STL set runs to hundreds of megabytes and ~600k triangles
 per piece — and the scene is reset between jobs, so that cost is otherwise paid *per
@@ -119,6 +139,33 @@ uv run chesssight assets bake ~/assets/my-set/manifest.json -o ~/assets/my-set-b
 
 Measured on the uppalong Staunton set: **21 s → 0.5 s per image**, and 248 MB → 24 MB
 on disk. Point `asset_manifest` at the baked manifest for real runs.
+
+### Positions
+
+Boards come from real games. The random sampler that produced earlier datasets places
+legal-*looking* pieces but not a legal-looking game: measured over 5 000 draws it puts
+15% of pieces on pawns where real games put 26%, and 12% on queens where real games put
+6%. It also has no structure — no pawn chains, no castled kings, nothing on a home
+square — which is most of what a board actually looks like.
+
+```bash
+curl -O https://database.lichess.org/standard/lichess_db_standard_rated_2013-01.pgn.zst
+```
+
+```yaml
+positions:
+  pgn_paths: [~/assets/chesssight/pgn/lichess_db_standard_rated_2013-01.pgn.zst]
+  weight_pgn: 0.7
+  weight_random: 0.3
+```
+
+Any month works; the 2013 files are ~17 MB and hold ~120 k games, which is far more
+than a dataset needs. `.pgn` and `.pgn.zst` are both read directly.
+
+The random share stays deliberately non-zero. Real games cluster near the starting
+position, and a purely game-derived set would let a model recover the position from
+chess priors rather than from pixels — which is the exact failure this generator exists
+to avoid.
 
 ### Environment lighting (HDRI)
 
