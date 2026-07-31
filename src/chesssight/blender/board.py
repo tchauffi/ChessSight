@@ -151,8 +151,13 @@ def build_board(spec: dict) -> dict:
         # damaged rather than as handmade.
         materials.organic(
             materials.styled(
-                "SquareLight", light, style, roughness=roughness, coat=0.15, flat=True,
-                maps=maps
+                "SquareLight",
+                light,
+                style,
+                roughness=roughness,
+                coat=0.15,
+                flat=True,
+                maps=maps,
             ),
             bevel_radius=0.002,
             instance_value=0.04,
@@ -160,8 +165,13 @@ def build_board(spec: dict) -> dict:
         ),
         materials.organic(
             materials.styled(
-                "SquareDark", dark, style, roughness=roughness, coat=0.15, flat=True,
-                maps=maps
+                "SquareDark",
+                dark,
+                style,
+                roughness=roughness,
+                coat=0.15,
+                flat=True,
+                maps=maps,
             ),
             bevel_radius=0.002,
             instance_value=0.04,

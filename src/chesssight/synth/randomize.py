@@ -621,9 +621,7 @@ def choose_veneers(
     texture_dir = config.scene.texture_dir
     if material.kind != "wood" or not pieces.veneers or texture_dir is None:
         return None, None
-    available = {
-        entry["slug"]: entry["maps"] for entry in texture_sets(texture_dir)
-    }
+    available = {entry["slug"]: entry["maps"] for entry in texture_sets(texture_dir)}
     return (
         available.get(pieces.veneers.get("light", "")),
         available.get(pieces.veneers.get("dark", "")),

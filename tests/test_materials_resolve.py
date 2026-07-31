@@ -195,9 +195,9 @@ class TestClock:
         for clock in self.clocks():
             assert clock is not None
             for x, y in self.footprint(clock):
-                assert max(abs(x), abs(y)) > half, (
-                    f"{clock.kind} clock corner ({x:.2f}, {y:.2f}) is on the board"
-                )
+                assert (
+                    max(abs(x), abs(y)) > half
+                ), f"{clock.kind} clock corner ({x:.2f}, {y:.2f}) is on the board"
 
     def test_it_stands_to_the_left_or_the_right(self):
         # Players sit at the two ends; the clock goes beside the board, not in

@@ -13,6 +13,7 @@ from chesssight.data.fen import CLASS_NAMES, LETTER_TO_CLASS, NUM_CLASSES
 from chesssight.data.masks import BOARD_LABEL
 from chesssight.train.labels import (
     BOARD_INDEX,
+    CORNER_INDEX,
     DETECTION_LABELS,
     ID2LABEL,
     LABEL2ID,
@@ -23,9 +24,9 @@ from chesssight.train.labels import (
 )
 
 
-def test_there_are_twelve_pieces_plus_the_board():
-    assert NUM_DETECTION_LABELS == 13
-    assert len(DETECTION_LABELS) == 13
+def test_there_are_twelve_pieces_plus_the_board_and_a_corner():
+    assert NUM_DETECTION_LABELS == 14
+    assert len(DETECTION_LABELS) == 14
 
 
 def test_empty_is_not_a_detection_class():
@@ -34,9 +35,12 @@ def test_empty_is_not_a_detection_class():
     assert DETECTION_LABELS[0] == "white_pawn"
 
 
-def test_the_board_is_the_last_class():
-    assert DETECTION_LABELS[-1] == "board"
-    assert BOARD_INDEX == NUM_DETECTION_LABELS - 1
+def test_the_board_and_the_corner_are_the_last_two_classes():
+    # The twelve pieces keep indices 0..11 so that class_id_to_index stays a plain
+    # offset of one; anything appended goes after them.
+    assert DETECTION_LABELS[-2:] == ("board", "corner")
+    assert BOARD_INDEX == NUM_DETECTION_LABELS - 2
+    assert CORNER_INDEX == NUM_DETECTION_LABELS - 1
 
 
 @pytest.mark.parametrize("class_id", range(1, NUM_CLASSES))
@@ -66,9 +70,17 @@ def test_id2label_and_label2id_agree():
     assert len(set(ID2LABEL.values())) == NUM_DETECTION_LABELS
 
 
-def test_is_piece_separates_the_board():
-    assert all(is_piece(index) for index in range(NUM_DETECTION_LABELS - 1))
+def test_is_piece_separates_the_board_and_the_corner():
+    assert all(is_piece(index) for index in range(NUM_DETECTION_LABELS - 2))
     assert not is_piece(BOARD_INDEX)
+    assert not is_piece(CORNER_INDEX)
+
+
+def test_a_corner_has_no_class_id():
+    # A corner is a point on the board, not an object that occupies a square.
+    # Returning 14 here would shift every downstream grid lookup by one.
+    with pytest.raises(ValueError, match="keypoint"):
+        index_to_class_id(CORNER_INDEX)
 
 
 @pytest.mark.parametrize("bad", [0, -1, BOARD_LABEL + 1, 99])

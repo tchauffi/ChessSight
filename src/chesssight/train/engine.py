@@ -59,6 +59,10 @@ class TrainConfig:
     #: Train-time augmentation. Off by default so a run without it is the baseline
     #: any measurement of its value is made against.
     augment: bool = False
+    #: Also learn the four board corners, as a class of small boxes. This is what a
+    #: position readout needs: boxes alone say where the pieces are, not which square
+    #: each one stands on.
+    corners: bool = False
     seed: int = 0
     limit: int | None = None
     #: Per-dataset oversampling. Real photographs are the target domain and there
@@ -109,7 +113,7 @@ def resolve_device(explicit: str | None = None) -> torch.device:
 def build_model(
     model_name: str = DEFAULT_MODEL, *, cls_loss_weight: float | None = None
 ):
-    """Load a pretrained detector and swap in a 13-class head.
+    """Load a pretrained detector and swap in a ChessSight head.
 
     ``ignore_mismatched_sizes`` is what allows the COCO 80-class head to be
     replaced; without it the load fails rather than reinitialising.
@@ -221,6 +225,7 @@ def build_loaders(config: TrainConfig, processor) -> tuple[DataLoader, DataLoade
         split="train",
         split_spec=spec,
         repeats=repeats,
+        include_corners=config.corners,
         transform=transform,
     )
 
@@ -234,6 +239,7 @@ def build_loaders(config: TrainConfig, processor) -> tuple[DataLoader, DataLoade
         split=config.eval_split,
         split_spec=spec,
         include_off_board=all(annotates_off_board(root) for root in config.data_roots),
+        include_corners=config.corners,
         limit=config.limit,
     )
 

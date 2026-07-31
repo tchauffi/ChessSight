@@ -20,7 +20,7 @@ from torch.utils.data import ConcatDataset, Dataset
 from chesssight.data.dataset import DatasetReader
 from chesssight.data.export import board_bbox
 from chesssight.data.schema import Sample
-from chesssight.train.labels import BOARD_INDEX, class_id_to_index
+from chesssight.train.labels import BOARD_INDEX, CORNER_INDEX, class_id_to_index
 
 #: Boxes smaller than this are dropped. A two-pixel sliver of a piece behind a
 #: queen is a real observation but an unlearnable target, and RT-DETR's matcher
@@ -123,8 +123,60 @@ def select_entries(
     return entries, split_source
 
 
+#: Side of a corner's box, as a fraction of the board's bounding box. One eighth is
+#: about one square, which puts corner boxes at the same scale as the pieces the
+#: detector already localises well -- a keypoint-sized box would land straight back in
+#: the small-object regime that is this model's weakest.
+CORNER_BOX_FRACTION = 1.0 / 8.0
+
+
+def corner_annotations(sample: Sample) -> list[dict]:
+    """Boxes centred on the four board corners.
+
+    A corner is a *point*, but the detector speaks boxes, so each one is carried as a
+    small square centred on it and read back from the box centre. This is what lets
+    corner prediction ride along in the same model and the same forward pass as
+    detection, with no architecture change and no custom loading code.
+
+    Corners outside the frame are dropped rather than clipped: a clipped box has its
+    centre somewhere other than the corner, which would train the model to place the
+    point wrongly on exactly the crops where geometry is hardest.
+    """
+    board = sample.board
+    if board is None or not board.corners_px:
+        return []
+
+    box = board_bbox(sample)
+    if box is None:
+        return []
+    side = max(box.width, box.height) * CORNER_BOX_FRACTION
+    if side < MIN_BOX_SIDE_PX:
+        return []
+
+    records = []
+    for point in board.corners_px:
+        x, y = float(point[0]), float(point[1])
+        # The sample's own dimensions, not the camera's: a real photograph has
+        # corners and a size but no camera block at all.
+        if not (0 <= x <= sample.width and 0 <= y <= sample.height):
+            continue
+        records.append(
+            {
+                "bbox": [x - side / 2.0, y - side / 2.0, side, side],
+                "category_id": CORNER_INDEX,
+                "area": float(side * side),
+                "iscrowd": 0,
+            }
+        )
+    return records
+
+
 def _annotations(
-    sample: Sample, *, include_board: bool, include_off_board: bool = True
+    sample: Sample,
+    *,
+    include_board: bool,
+    include_off_board: bool = True,
+    include_corners: bool = False,
 ) -> list[dict]:
     """COCO-style annotations for one sample, in detector label indices."""
     records: list[dict] = []
@@ -165,6 +217,8 @@ def _annotations(
                     "iscrowd": 0,
                 }
             )
+    if include_corners:
+        records.extend(corner_annotations(sample))
     return records
 
 
@@ -180,6 +234,7 @@ class ChessDetectionDataset(Dataset):
         split_spec: SplitSpec | None = None,
         include_board: bool = True,
         include_off_board: bool = True,
+        include_corners: bool = False,
         limit: int | None = None,
         split_source: str = "auto",
         transform=None,
@@ -193,6 +248,7 @@ class ChessDetectionDataset(Dataset):
         self.processor = processor
         self.include_board = include_board
         self.include_off_board = include_off_board
+        self.include_corners = include_corners
         self.split = split
         # Augmentation applies to training only; a validation set that changes
         # every epoch measures nothing.
@@ -226,6 +282,7 @@ class ChessDetectionDataset(Dataset):
             sample,
             include_board=self.include_board,
             include_off_board=self.include_off_board,
+            include_corners=self.include_corners,
         )
 
         if self.transform is not None and records:
@@ -300,6 +357,7 @@ def build_mixed(
     split_spec: SplitSpec | None = None,
     repeats: Sequence[int] | None = None,
     include_board: bool = True,
+    include_corners: bool = False,
     transform=None,
 ) -> ConcatDataset:
     """Concatenate several runs into one training set.
@@ -330,6 +388,7 @@ def build_mixed(
             split_spec=split_spec,
             include_board=include_board,
             include_off_board=include_off_board,
+            include_corners=include_corners,
             transform=transform,
         )
         parts.extend([dataset] * repeat)

@@ -16,7 +16,14 @@ from chesssight.data.masks import BOARD_LABEL
 
 #: Detector label index -> human name. Index 0 is the white pawn, not "empty":
 #: an empty square is the absence of a detection, not a class to predict.
-DETECTION_LABELS: tuple[str, ...] = (*CLASS_NAMES[1:NUM_CLASSES], "board")
+#:
+#: ``corner`` is a keypoint carried as a detection: four small boxes centred on the
+#: board's corners, whose centres give the homography. One class rather than four
+#: named ones, because a chessboard is symmetric -- which corner is a8 cannot be read
+#: off the board's appearance, only off the pieces standing on it, so asking the model
+#: to name it would be asking an unanswerable question. Order is resolved
+#: geometrically afterwards.
+DETECTION_LABELS: tuple[str, ...] = (*CLASS_NAMES[1:NUM_CLASSES], "board", "corner")
 
 #: Number of classes the detection head predicts.
 NUM_DETECTION_LABELS = len(DETECTION_LABELS)
@@ -26,6 +33,11 @@ LABEL2ID: dict[str, int] = {name: index for index, name in ID2LABEL.items()}
 
 #: Detector index of the board class.
 BOARD_INDEX = LABEL2ID["board"]
+
+#: Detector index of a board corner. Unlike every other label this one has no
+#: ChessSight class id behind it -- a corner is a point on the board, not an object
+#: that can occupy a square.
+CORNER_INDEX = LABEL2ID["corner"]
 
 
 def class_id_to_index(class_id: int) -> int:
@@ -37,11 +49,13 @@ def class_id_to_index(class_id: int) -> int:
 
 def index_to_class_id(index: int) -> int:
     """Detector label index (0..12) -> ChessSight class id (1..13)."""
+    if index == CORNER_INDEX:
+        raise ValueError("the corner label is a keypoint and has no ChessSight class")
     if not 0 <= index < NUM_DETECTION_LABELS:
         raise ValueError(f"label index {index} outside 0..{NUM_DETECTION_LABELS - 1}")
     return index + 1
 
 
 def is_piece(index: int) -> bool:
-    """Whether a detector index names a piece rather than the board."""
-    return index != BOARD_INDEX
+    """Whether a detector index names a piece rather than the board or a corner."""
+    return index not in (BOARD_INDEX, CORNER_INDEX)

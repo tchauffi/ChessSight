@@ -540,6 +540,15 @@ def train_detr(
             "it is not an unbiased estimate by the end.",
         ),
     ] = 0.1,
+    corners: Annotated[
+        bool,
+        typer.Option(
+            "--corners/--no-corners",
+            help="Also learn the four board corners, carried as a class of small "
+            "boxes. Their centres give the homography, which is what turns piece "
+            "boxes into a position rather than a pile of detections.",
+        ),
+    ] = False,
     repeats: Annotated[
         str | None,
         typer.Option(
@@ -613,6 +622,7 @@ def train_detr(
         select_metric=select_metric,
         cls_loss_weight=cls_weight,
         augment=augment,
+        corners=corners,
         ema=ema,
         model_name=model,
         epochs=epochs,
