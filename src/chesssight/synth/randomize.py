@@ -29,6 +29,7 @@ from chesssight.synth.jobspec import (
     PiecePlacement,
     ResolvedBoard,
     ResolvedCamera,
+    ResolvedClock,
     ResolvedDepthOfField,
     ResolvedLamp,
     ResolvedLighting,
@@ -45,8 +46,10 @@ HDRI_SUFFIXES = (".hdr", ".exr")
 
 #: The material styles the Blender side knows how to build. Kept here so a typo in
 #: a config's weights fails at resolve time rather than rendering a plain board.
-MaterialKind = Literal["plastic", "wood", "marble", "plain"]
-MATERIAL_KINDS: frozenset[str] = frozenset(("plastic", "wood", "marble", "plain"))
+MaterialKind = Literal["plastic", "wood", "marble", "plain", "textured"]
+MATERIAL_KINDS: frozenset[str] = frozenset(
+    ("plastic", "wood", "marble", "plain", "textured")
+)
 
 #: Height of the tallest piece in square units, before per-scene style jitter. The
 #: camera has to leave room for a king standing at the far edge, which at grazing
@@ -357,6 +360,20 @@ def choose_material_style(
             contrast=rng.uniform(0.12, 0.28),
             rotation_deg=[rng.uniform(0.0, 360.0) for _ in range(3)],
         )
+    if kind == "textured":
+        # A photographed surface carries its own figure, so the only thing to draw
+        # is how it is coloured and how big it is laid down. The ranges are wide on
+        # purpose: the point of this dataset is images that are *hard*, and a board
+        # in a colour nobody sells forces the detector onto shape rather than hue.
+        return MaterialStyle(
+            kind=kind,
+            scale=rng.uniform(0.15, 0.6),
+            distortion=0.0,
+            contrast=0.0,
+            hue_shift=rng.uniform(-0.5, 0.5),
+            saturation=rng.uniform(0.4, 1.5),
+            brightness=rng.uniform(0.6, 1.4),
+        )
     return MaterialStyle(kind=kind, scale=1.0, distortion=0.0, contrast=0.0)
 
 
@@ -373,9 +390,17 @@ def resolve_board(config: GeneratorConfig, rng: random.Random) -> ResolvedBoard:
     # roughly twenty times the frequency the same style uses on a piece -- which
     # turned marble veining into dense scribble. Divide into board units so the two
     # surfaces carry figure at a comparable size.
-    style = style.model_copy(
-        update={"scale": board.grain_scale.sample(rng) / BOARD_SIZE}
-    )
+    maps = None
+    if style.kind == "textured":
+        maps = _pick_texture(config.scene.texture_dir, rng)
+        if maps is None:
+            # No textures downloaded: fall back to the procedural rather than
+            # rendering an untextured surface that silently ignores its style.
+            style = style.model_copy(update={"kind": "wood"})
+    if style.kind != "textured":
+        style = style.model_copy(
+            update={"scale": board.grain_scale.sample(rng) / BOARD_SIZE}
+        )
     return ResolvedBoard(
         square_size=board.square_size,
         thickness=board.thickness.sample(rng),
@@ -384,7 +409,69 @@ def resolve_board(config: GeneratorConfig, rng: random.Random) -> ResolvedBoard:
         dark_color=dark,
         roughness=board.roughness.sample(rng),
         material=style,
+        maps=maps,
     )
+
+
+def resolve_clock(
+    scene: SceneConfig, rng: random.Random, *, square_size: float
+) -> ResolvedClock | None:
+    """Place a chess clock beside the board, or None.
+
+    Positioned against one of the four edges rather than anywhere on the table: a
+    clock stands where a player can reach it without leaning over the board, which
+    in practice means square to an edge and clear of the playing surface. Randomly
+    chosen edge, so the model does not learn that a clock is always on the right.
+    """
+    if rng.random() >= scene.clock_probability:
+        return None
+
+    digital = rng.random() < scene.clock_digital_probability
+    width = scene.clock_width.sample(rng) * square_size
+    # Depth follows the reference proportions the geometry is built from.
+    depth = width * (0.69 if digital else 0.62)
+
+    half_board = BOARD_SIZE / 2.0 * square_size
+    # Beside the board, never on it. Players sit at the two ends, so the clock goes
+    # to the left or the right -- the sides along the files -- and its long axis runs
+    # *parallel* to that edge, which is how it sits on a real table. Clearance is
+    # measured against the clock's depth, since that is the extent facing the board:
+    # using its width instead let a four-square-wide clock centred just outside the
+    # edge reach back across two ranks of squares.
+    side = rng.choice((0.0, 180.0))
+    angle = math.radians(side)
+    clearance = half_board + depth / 2.0 + scene.clock_offset.sample(rng) * square_size
+    along = rng.uniform(-half_board * 0.45, half_board * 0.45)
+    x = clearance * math.cos(angle) - along * math.sin(angle)
+    y = clearance * math.sin(angle) + along * math.cos(angle)
+    body = (
+        [rng.uniform(0.02, 0.09)] * 3
+        if digital
+        # Analogue cases are wood or cream plastic far more often than black.
+        else _jitter_color([0.42, 0.28, 0.16], rng, 0.35)
+    )
+    return ResolvedClock(
+        kind="digital" if digital else "analogue",
+        x=x,
+        y=y,
+        # A quarter turn from the edge normal, so the long axis runs along the edge
+        # and the face looks away from the board rather than into it.
+        rotation_deg=side + 90.0 + rng.uniform(-10.0, 10.0),
+        width=width,
+        body_color=body,
+        face_color=_jitter_color([0.88, 0.87, 0.83], rng, 0.08),
+        button_color=[rng.uniform(0.05, 0.25) for _ in range(3)],
+    )
+
+
+def _pick_texture(
+    texture_dir: Path | None, rng: random.Random
+) -> dict[str, str] | None:
+    """Any complete texture set from the library, or None when there are none."""
+    if texture_dir is None:
+        return None
+    available = texture_sets(texture_dir)
+    return rng.choice(available)["maps"] if available else None
 
 
 def choose_veneers(
@@ -599,6 +686,7 @@ def resolve_scene(config: GeneratorConfig, rng: random.Random) -> ResolvedScene:
                 )
             )
 
+    clock = resolve_clock(scene, rng, square_size=square_size)
     table_size = scene.table_size.sample(rng) * square_size
     return ResolvedScene(
         table_size=table_size,
@@ -606,6 +694,7 @@ def resolve_scene(config: GeneratorConfig, rng: random.Random) -> ResolvedScene:
         table_color=_jitter_color(rng.choice(scene.table_color), rng, 0.05),
         table_roughness=scene.table_roughness.sample(rng),
         table_texture=choose_table_texture(scene, rng, table_size=table_size),
+        clock=clock,
         distractors=distractors,
     )
 

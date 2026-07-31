@@ -143,6 +143,7 @@ def build_board(spec: dict) -> dict:
     # Both colours get the same style so the two square sets read as one board
     # rather than as two materials butted together.
     style = spec.get("material")
+    maps = spec.get("maps")
     squares = build_squares(
         square_size,
         # Squares vary a touch square to square, as an inlaid board does, but far
@@ -150,7 +151,8 @@ def build_board(spec: dict) -> dict:
         # damaged rather than as handmade.
         materials.organic(
             materials.styled(
-                "SquareLight", light, style, roughness=roughness, coat=0.15, flat=True
+                "SquareLight", light, style, roughness=roughness, coat=0.15, flat=True,
+                maps=maps
             ),
             bevel_radius=0.002,
             instance_value=0.04,
@@ -158,7 +160,8 @@ def build_board(spec: dict) -> dict:
         ),
         materials.organic(
             materials.styled(
-                "SquareDark", dark, style, roughness=roughness, coat=0.15, flat=True
+                "SquareDark", dark, style, roughness=roughness, coat=0.15, flat=True,
+                maps=maps
             ),
             bevel_radius=0.002,
             instance_value=0.04,
@@ -179,6 +182,7 @@ def build_board(spec: dict) -> dict:
                 roughness=min(1.0, roughness + 0.1),
                 coat=0.1,
                 flat=True,
+                maps=maps,
             ),
             bevel_radius=0.010,
             instance_value=0.03,

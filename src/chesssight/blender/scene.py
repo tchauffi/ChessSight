@@ -145,6 +145,171 @@ def build_table(
     return table
 
 
+def _disc_facing_y(
+    name: str,
+    radius: float,
+    thickness: float,
+    location: tuple[float, float, float],
+    segments: int = 24,
+) -> bpy.types.Object:
+    """A short cylinder whose axis runs along Y, i.e. a dial facing the player."""
+    vertices = []
+    for ring, offset in ((0, 0.0), (1, thickness)):
+        for index in range(segments):
+            angle = math.tau * index / segments
+            vertices.append(
+                (
+                    location[0] + radius * math.cos(angle),
+                    location[1] + offset,
+                    location[2] + radius * math.sin(angle),
+                )
+            )
+        del ring
+    faces = [
+        (
+            index,
+            (index + 1) % segments,
+            segments + (index + 1) % segments,
+            segments + index,
+        )
+        for index in range(segments)
+    ]
+    faces.append(tuple(range(segments - 1, -1, -1)))
+    faces.append(tuple(range(segments, 2 * segments)))
+    return bl_utils.new_mesh_object(name, vertices, [], faces)
+
+
+def _wedge(
+    name: str,
+    width: float,
+    depth: float,
+    front_height: float,
+    back_height: float,
+) -> bpy.types.Object:
+    """A box with a sloped top -- the shape of most digital clocks.
+
+    Built at the origin facing -Y; the caller rotates and places it. The slope is
+    what makes the display readable from a seated player's angle, and it is the
+    feature that distinguishes a digital clock's silhouette from a plain box.
+    """
+    half_w, half_d = width / 2.0, depth / 2.0
+    vertices = [
+        (-half_w, -half_d, 0.0),
+        (half_w, -half_d, 0.0),
+        (half_w, half_d, 0.0),
+        (-half_w, half_d, 0.0),
+        (-half_w, -half_d, front_height),
+        (half_w, -half_d, front_height),
+        (half_w, half_d, back_height),
+        (-half_w, half_d, back_height),
+    ]
+    faces = [
+        (3, 2, 1, 0),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ]
+    return bl_utils.new_mesh_object(name, vertices, [], faces)
+
+
+def build_clock(spec: dict) -> list[bpy.types.Object]:
+    """A chess clock standing beside the board.
+
+    Two models, because the two are common and look nothing alike: an analogue case
+    with a pair of round dials and plungers on top, and a wedge-shaped digital one
+    with a display and buttons. Proportions come from real clocks -- roughly
+    200x125x58 mm analogue and 166x114x65 mm digital -- so against a 50 mm square a
+    clock is about four squares wide.
+
+    Everything here is tagged as scenery. A clock is emphatically not a piece, and
+    the detector has already been observed calling one's plungers a bishop; the
+    point of putting it in the training set is to teach it that this object exists
+    and is not part of the position.
+    """
+    if not spec:
+        return []
+
+    width = spec["width"]
+    kind = spec["kind"]
+    body_material = materials.solid(
+        "ClockBody", tuple(spec["body_color"]), roughness=0.45, coat=0.2
+    )
+    face_material = materials.solid(
+        "ClockFace", tuple(spec["face_color"]), roughness=0.25, coat=0.4
+    )
+    button_material = materials.solid(
+        "ClockButton", tuple(spec["button_color"]), roughness=0.35
+    )
+
+    parts: list[bpy.types.Object] = []
+    if kind == "digital":
+        depth = width * 0.69
+        body = _wedge("ClockBody", width, depth, width * 0.20, width * 0.39)
+        materials.assign(body, body_material)
+        parts.append(body)
+
+        # The display sits on the sloped face, inset from the edges.
+        panel = pieces._box(
+            "ClockDisplay",
+            (width * 0.62, depth * 0.30, width * 0.012),
+            (0.0, -depth * 0.12, width * 0.265),
+        )
+        materials.assign(panel, face_material)
+        parts.append(panel)
+
+        for sign in (-1.0, 1.0):
+            button = _cylinder(
+                "ClockButton",
+                width * 0.075,
+                width * 0.05,
+                (sign * width * 0.30, depth * 0.28, width * 0.36),
+            )
+            materials.assign(button, button_material)
+            parts.append(button)
+    else:
+        depth = width * 0.62
+        height = width * 0.29
+        body = pieces._box("ClockBody", (width, depth, height), (0.0, 0.0, height / 2))
+        materials.assign(body, body_material)
+        parts.append(body)
+
+        # Two dials, 75 mm across on a 200 mm case, so a little over a third of the
+        # width each -- they nearly fill the face, which is what makes the silhouette
+        # read as a clock rather than as a box.
+        for sign in (-1.0, 1.0):
+            dial = _disc_facing_y(
+                "ClockDial",
+                width * 0.185,
+                width * 0.02,
+                (sign * width * 0.24, -depth / 2.0 - width * 0.015, height * 0.55),
+            )
+            materials.assign(dial, face_material)
+            parts.append(dial)
+
+            plunger = _cylinder(
+                "ClockPlunger",
+                width * 0.045,
+                width * 0.055,
+                (sign * width * 0.36, 0.0, height),
+            )
+            materials.assign(plunger, button_material)
+            parts.append(plunger)
+
+    clock = parts[0]
+    bl_utils.join(clock, parts[1:])
+    clock.name = "Clock"
+    clock.location = (spec["x"], spec["y"], 0.0)
+    clock.rotation_euler = (0.0, 0.0, math.radians(spec["rotation_deg"]))
+    # Tagged as a distractor, not as a role of its own. As far as the label pass is
+    # concerned a clock *is* clutter: visible scenery that occupies no square and
+    # enters no annotation. A new role would need its own code in the id pass and
+    # handling everywhere downstream, to express a distinction nothing acts on.
+    bl_utils.tag(clock, "distractor", instance_id=0)
+    return [clock]
+
+
 def build_distractors(spec: dict) -> list[bpy.types.Object]:
     """Clutter around the board, so the model cannot assume a clean table."""
     created = []
@@ -359,6 +524,7 @@ def build_scene(job: dict) -> dict:
     table_z = -(board.SLAB_GAP + job["board"]["thickness"])
     placed += place_captured(job["pieces"], piece_set, square_size, table_z)
     distractors = build_distractors(job["scene"])
+    distractors += build_clock(job["scene"].get("clock"))
     camera = build_camera(job["camera"])
 
     bpy.context.view_layer.update()

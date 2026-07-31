@@ -9,11 +9,13 @@ colour, and whether the veneer pair is a pair at all.
 
 from __future__ import annotations
 
+import math
 import random
 from pathlib import Path
 
 import pytest
 
+from chesssight.data.fen import BOARD_SIZE
 from chesssight.synth.config import GeneratorConfig
 from chesssight.synth.randomize import (
     MATERIAL_KINDS,
@@ -21,6 +23,7 @@ from chesssight.synth.randomize import (
     choose_table_texture,
     choose_veneers,
     resolve_board,
+    resolve_clock,
     resolve_pieces,
 )
 from tests.test_textures import write_set
@@ -155,6 +158,83 @@ class TestTableTexture:
     def test_an_empty_directory_falls_back_to_flat_colour(self, tmp_path: Path):
         scene = config(scene={"texture_dir": str(tmp_path)}).scene
         assert choose_table_texture(scene, random.Random(0), table_size=30.0) is None
+
+
+class TestClock:
+    """A clock stands beside the board, on the left or the right, never on it."""
+
+    def clocks(self, count: int = 300, **scene):
+        cfg = config(scene={"clock_probability": 1.0, **scene})
+        return [
+            resolve_clock(cfg.scene, random.Random(seed), square_size=1.0)
+            for seed in range(count)
+        ]
+
+    @staticmethod
+    def footprint(clock) -> list[tuple[float, float]]:
+        """The four corners of the clock's base, in world coordinates."""
+        depth = clock.width * (0.69 if clock.kind == "digital" else 0.62)
+        theta = math.radians(clock.rotation_deg)
+        corners = []
+        for sx in (-0.5, 0.5):
+            for sy in (-0.5, 0.5):
+                lx, ly = sx * clock.width, sy * depth
+                corners.append(
+                    (
+                        clock.x + lx * math.cos(theta) - ly * math.sin(theta),
+                        clock.y + lx * math.sin(theta) + ly * math.cos(theta),
+                    )
+                )
+        return corners
+
+    def test_no_clock_ever_overlaps_the_board(self):
+        # The bug this pins: the clock's *width* axis pointed at the board rather
+        # than along the edge, so a four-square-wide clock centred just outside the
+        # edge reached back across two ranks and sat on the squares.
+        half = BOARD_SIZE / 2.0
+        for clock in self.clocks():
+            assert clock is not None
+            for x, y in self.footprint(clock):
+                assert max(abs(x), abs(y)) > half, (
+                    f"{clock.kind} clock corner ({x:.2f}, {y:.2f}) is on the board"
+                )
+
+    def test_it_stands_to_the_left_or_the_right(self):
+        # Players sit at the two ends; the clock goes beside the board, not in
+        # front of a player.
+        for clock in self.clocks():
+            assert clock is not None
+            assert abs(clock.x) > abs(clock.y)
+
+    def test_both_sides_are_used(self):
+        sides = {clock.x > 0 for clock in self.clocks() if clock}
+        assert sides == {True, False}
+
+    def test_both_models_are_built(self):
+        kinds = {clock.kind for clock in self.clocks() if clock}
+        assert kinds == {"analogue", "digital"}
+
+    def test_the_long_axis_runs_along_the_edge(self):
+        # A quarter turn from the edge normal: the face looks away from the board,
+        # which is how a clock sits where both players can read it.
+        for clock in self.clocks(count=60):
+            assert clock is not None
+            offset = min(
+                abs((clock.rotation_deg - reference) % 180.0) for reference in (90.0,)
+            )
+            assert offset < 15.0 or offset > 165.0
+
+    def test_probability_zero_never_places_one(self):
+        scene = config(scene={"clock_probability": 0.0}).scene
+        for seed in range(40):
+            assert resolve_clock(scene, random.Random(seed), square_size=1.0) is None
+
+    def test_width_matches_a_real_clock(self):
+        # Real clocks are 165-220 mm against a ~50 mm square, so three to four and a
+        # half squares. A clock at piece scale is a different object entirely.
+        for clock in self.clocks(count=60):
+            assert clock is not None
+            assert 2.5 < clock.width < 5.0
 
 
 class TestResolvedIntoTheSpec:

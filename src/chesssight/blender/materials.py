@@ -648,6 +648,27 @@ def styled(
         math.radians(angle) for angle in (style or {}).get("rotation_deg", (0, 0, 0))
     )
 
+    if kind == "textured" and maps:
+        # Flat for a board, triplanar for a piece. The board is a quad and projects
+        # cleanly; a lathed piece has no UV map at all, so box projection is the
+        # only way a photograph reaches it.
+        #
+        # The surface colour is multiplied *into* the photograph rather than
+        # replaced by it. Light and dark squares share one texture, so without this
+        # they come out identical and the board loses its chequer entirely -- an
+        # image with no visible grid, still carrying labels that say where every
+        # square is. Tinting keeps the photographed grain while restoring the
+        # contrast, which is also how a real board is made: one timber, two stains.
+        return textured(
+            name,
+            maps,
+            scale=scale,
+            projection="FLAT" if flat else "BOX",
+            tint=color,
+            hue_shift=(style or {}).get("hue_shift", 0.0),
+            saturation=(style or {}).get("saturation", 1.0),
+            brightness=(style or {}).get("brightness", 1.0),
+        )
     if kind == "marble":
         return marble(
             name,

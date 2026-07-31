@@ -91,7 +91,7 @@ class MaterialStyle(StrictModel):
     selects a node graph -- it never draws a random number.
     """
 
-    kind: Literal["plastic", "wood", "marble", "plain"]
+    kind: Literal["plastic", "wood", "marble", "plain", "textured"]
     scale: float = Field(default=3.0, gt=0)
     distortion: float = Field(default=4.0, ge=0)
     #: How far the figure departs from the body colour: the growth ring in wood, the
@@ -125,6 +125,10 @@ class ResolvedBoard(StrictModel):
     roughness: float = Field(ge=0, le=1)
     #: None keeps the plain flat-colour squares, which is also the default.
     material: MaterialStyle | None = None
+    #: Photographed surface for the squares, when the drawn style is `textured`.
+    #: Flat-projected: a board is a flat quad, so unlike the pieces it needs no
+    #: triplanar trick.
+    maps: dict[str, str] | None = None
 
 
 class PiecePlacement(StrictModel):
@@ -214,6 +218,28 @@ class TableTexture(StrictModel):
     brightness: float = Field(default=1.0, ge=0.0, le=2.0)
 
 
+class ResolvedClock(StrictModel):
+    """A chess clock standing beside the board.
+
+    Sized from real ones: an analogue case is about 200x125x58 mm and a digital one
+    about 166x114x65 mm, so against a 50 mm square a clock is roughly four squares
+    wide. Getting that wrong matters more than it sounds -- a clock rendered at
+    piece scale is a different object as far as a detector is concerned.
+    """
+
+    kind: Literal["analogue", "digital"]
+    #: World x/y on the table surface, beside the board.
+    x: float
+    y: float
+    #: Facing, in degrees. A clock sits square to the board edge it stands beside.
+    rotation_deg: float
+    #: Overall width in squares; depth and height follow the reference proportions.
+    width: float = Field(gt=0)
+    body_color: RGB
+    face_color: RGB
+    button_color: RGB
+
+
 class ResolvedScene(StrictModel):
     table_size: float = Field(gt=0)
     table_thickness: float = Field(gt=0)
@@ -221,6 +247,10 @@ class ResolvedScene(StrictModel):
     table_roughness: float = Field(ge=0, le=1)
     #: None means the flat colour above is used, which is also the no-assets path.
     table_texture: TableTexture | None = None
+    #: Players use a clock in most serious games, so it is its own element rather
+    #: than one more piece of random clutter -- it has a characteristic size and a
+    #: characteristic place, beside the board and square to it.
+    clock: ResolvedClock | None = None
     distractors: list[Distractor]
 
 

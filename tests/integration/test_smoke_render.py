@@ -428,6 +428,16 @@ class TestGrazingViews:
                     "framing_margin": {"min": 1.0, "max": 1.0},
                     "target_jitter": {"min": 0.0, "max": 0.0},
                 },
+                # No clutter, so this measures what it says: whether *elevation*
+                # keeps pieces visible. A clock is four squares wide and stands
+                # beside the board, so near edge-on it hides much of what is behind
+                # it -- measured at 512px over 24 samples, 96.3% of pieces stay
+                # visible at 8 degrees without one and 89.6% with one. That
+                # occlusion is real and correctly labelled (the hidden pieces are
+                # marked not visible), but it is a fact about clutter, not about
+                # camera elevation, and mixing the two makes this test unable to
+                # say which one moved.
+                "scene": {"clock_probability": 0.0, "distractor_probability": 0.0},
                 "positions": {
                     "pgn_paths": [],
                     "weight_pgn": 0.0,

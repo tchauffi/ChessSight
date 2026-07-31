@@ -166,7 +166,17 @@ class BoardConfig(StrictModel):
     #: wood or inlaid stone far more often than they are flat colour, and against a
     #: photographed tabletop a flat-colour board became the most obviously rendered
     #: thing in the frame.
-    material_styles: dict[str, float] = {"wood": 0.55, "marble": 0.25, "plain": 0.20}
+    #: `textured` draws a photograph from the texture library; `plastic` is the
+    #: moulded vinyl of a roll-up tournament board. Keeping both, rather than
+    #: converging on the most realistic one, is the point: this dataset is meant to
+    #: be hard, and a detector that has only seen veneer will not read a plastic
+    #: board across a hall.
+    material_styles: dict[str, float] = {
+        "textured": 0.30,
+        "wood": 0.25,
+        "marble": 0.15,
+        "plastic": 0.30,
+    }
     #: Grain scale for the squares, in repeats per square. Randomised because a
     #: fixed figure size is itself a constant a detector can key on.
     grain_scale: FloatRange = FloatRange(min=1.5, max=6.0)
@@ -214,7 +224,15 @@ class PiecesConfig(StrictModel):
     #: the same light -- plastic reads as a smooth coloured solid, wood shows rings
     #: around the axis it was turned on, marble shows veins running through it.
     #: Weights, not a single choice, so one dataset carries all three.
-    material_styles: dict[str, float] = {"plastic": 0.45, "wood": 0.35, "marble": 0.20}
+    #: Both a moulded-plastic look and a photographed one are kept deliberately.
+    #: The target footage is full of cheap plastic tournament sets, and the mix of
+    #: a flat moulded surface against a photographed timber is exactly the range
+    #: the detector has to cope with.
+    material_styles: dict[str, float] = {
+        "plastic": 0.40,
+        "wood": 0.35,
+        "marble": 0.25,
+    }
     #: Veneer textures used when the wood style is drawn, box-projected onto the
     #: pieces. Curated separately from the table's: a floor texture's plank joins
     #: wrap a piece as hoops and make it look coopered, so only seamless raw-timber
@@ -322,6 +340,18 @@ class SceneConfig(StrictModel):
     texture_hue_shift: FloatRange = FloatRange(min=-0.02, max=0.02)
     texture_saturation: FloatRange = FloatRange(min=0.85, max=1.15)
     texture_brightness: FloatRange = FloatRange(min=0.8, max=1.2)
+    #: Most serious games are played with a clock, and the detector has already been
+    #: seen to mistake one for a piece -- in test footage it boxed a clock's
+    #: plungers as a bishop. Training on scenes that contain one attacks that
+    #: directly, and a clock is labelled as scenery, never as a piece.
+    clock_probability: Probability = 0.45
+    #: Analogue against digital. Both are common; the two look nothing alike, so a
+    #: model that has only seen one will not recognise the other as furniture.
+    clock_digital_probability: Probability = 0.5
+    #: Overall width in squares. Real clocks run 165-220 mm against a ~50 mm square.
+    clock_width: FloatRange = FloatRange(min=3.0, max=4.6)
+    #: How far the clock stands from the board edge, in squares.
+    clock_offset: FloatRange = FloatRange(min=0.8, max=2.6)
     distractor_count: IntRange = IntRange(min=0, max=3)
     distractor_probability: Probability = 0.3
 
