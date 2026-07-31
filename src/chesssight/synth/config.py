@@ -162,6 +162,13 @@ class BoardConfig(StrictModel):
     #: the same proportion and keep their hue. An absolute offset would leave light
     #: squares almost unchanged while randomising dark ones into a different colour.
     color_jitter: FloatRange = FloatRange(min=-0.18, max=0.18)
+    #: Least brightness difference allowed between a square and the pieces standing
+    #: on it. Board and piece palettes are drawn independently, so without a floor
+    #: they can land almost on top of each other -- measured on the defaults, black
+    #: pieces came within 0.030 luminance of the darkest squares. Low contrast is
+    #: legitimately hard and worth training on; *no* contrast is a label describing
+    #: something the image does not show.
+    min_piece_contrast: float = Field(default=0.14, ge=0.0, le=0.5)
     #: What the board is made of, drawn per scene by weight. Boards are veneered
     #: wood or inlaid stone far more often than they are flat colour, and against a
     #: photographed tabletop a flat-colour board became the most obviously rendered

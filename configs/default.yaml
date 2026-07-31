@@ -5,11 +5,15 @@
 #   CYCLES         ~1-3 s/image  - use this for the final dataset; it needs OPTIX,
 #                                  and no more than 2 workers since they share one GPU.
 count: 50000
-master_seed: 20260729
+master_seed: 20260731
 
 render:
   engine: CYCLES
-  samples: 96
+  # 48 rather than 96: the OptiX denoiser flattens the difference entirely --
+  # crops at 96, 48, 32 and 16 samples are indistinguishable -- and 48 is 17%
+  # faster. Rendering is not sample-bound anyway; most of the per-image cost is
+  # rebuilding the scene, so cutting samples six-fold only buys a third.
+  samples: 48
   # 640 matches the resolution RT-DETR is pretrained at, and puts ~56% more pixels
   # on each piece -- aimed squarely at the small-object gap (mAP small 0.50 vs
   # large 0.93 measured on the 512 dataset). Render cost scales with pixel count.
@@ -85,6 +89,15 @@ scene:
   # A finite slab with a visible edge, so the HDRI room shows beyond the table
   # instead of the table running to the horizon.
   table_thickness: {min: 0.4, max: 1.0}
+  # Poly Haven PBR maps (fetch with `chesssight assets textures`). This is what
+  # makes the tabletop a photographed surface rather than a tinted plane, and it is
+  # also where the piece veneers come from. A missing directory silently falls back
+  # to flat colour and procedural grain, so the pipeline still runs without it --
+  # which is exactly why it is worth stating explicitly here.
+  texture_dir: ~/assets/chesssight/textures
+  # Most serious games are played with a clock, and the detector has been seen to
+  # mistake one for a piece. It is labelled as scenery, never as a piece.
+  clock_probability: 0.45
   distractor_probability: 0.3
   distractor_count: {min: 0, max: 3}
 
@@ -96,8 +109,12 @@ positions:
   # instead of reading pixels. Measured over 5000 draws, the mixture puts 23% of
   # pieces on pawns against a random sampler's 15% -- real games are mostly pawns,
   # and pawns are the classes the detector scores worst on.
+  # Two months rather than one, so a regenerated dataset draws from a different
+  # pool than the last: same-seed reproducibility is a property of the generator,
+  # not a reason to keep showing the model the same 118k positions.
   pgn_paths:
     - ~/assets/chesssight/pgn/lichess_db_standard_rated_2013-01.pgn.zst
+    - ~/assets/chesssight/pgn/lichess_db_standard_rated_2013-02.pgn.zst
   max_games: 40000
   plies_per_game: 3
   skip_opening_plies: 6

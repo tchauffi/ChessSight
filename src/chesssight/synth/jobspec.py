@@ -194,7 +194,7 @@ class ResolvedPieces(StrictModel):
 
 
 class Distractor(StrictModel):
-    kind: Literal["cup", "block", "clock"]
+    kind: Literal["cup", "block", "notepad", "pen", "phone", "glass"]
     location: Vec3
     size: float = Field(gt=0)
     rotation_deg: float
@@ -233,8 +233,23 @@ class ResolvedClock(StrictModel):
     y: float
     #: Facing, in degrees. A clock sits square to the board edge it stands beside.
     rotation_deg: float
-    #: Overall width in squares; depth and height follow the reference proportions.
+    #: Overall width in squares. Everything else is a ratio of it, so one number
+    #: sets the scale and the rest set the shape.
     width: float = Field(gt=0)
+    depth_ratio: float = Field(gt=0)
+    height_ratio: float = Field(gt=0)
+    #: Analogue: dial radius and how far apart the pair sits, both as a fraction of
+    #: width. Digital: display panel size and inset.
+    face_ratio: float = Field(gt=0)
+    face_offset: float = Field(gt=0)
+    #: Plungers on an analogue case, buttons on a digital one.
+    knob_ratio: float = Field(gt=0)
+    knob_count: int = Field(ge=2, le=3)
+    #: Digital only: front height as a fraction of back height. 1.0 is a plain box,
+    #: lower is a more steeply raked wedge.
+    slope: float = Field(gt=0, le=1.0)
+    #: A raised rim around an analogue dial, as most cases have.
+    bezel: bool = False
     body_color: RGB
     face_color: RGB
     button_color: RGB

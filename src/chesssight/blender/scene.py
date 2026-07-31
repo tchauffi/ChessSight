@@ -243,56 +243,84 @@ def build_clock(spec: dict) -> list[bpy.types.Object]:
         "ClockButton", tuple(spec["button_color"]), roughness=0.35
     )
 
+    # Every proportion arrives resolved, so the geometry here is a pure function of
+    # the spec and two clocks in different scenes are genuinely different objects
+    # rather than the same model twice.
+    depth = width * spec["depth_ratio"]
+    height = width * spec["height_ratio"]
+    face_ratio = spec["face_ratio"]
+    face_offset = spec["face_offset"]
+    knob = width * spec["knob_ratio"]
+    knob_count = spec["knob_count"]
+
     parts: list[bpy.types.Object] = []
     if kind == "digital":
-        depth = width * 0.69
-        body = _wedge("ClockBody", width, depth, width * 0.20, width * 0.39)
+        front = height * spec["slope"]
+        body = _wedge("ClockBody", width, depth, front, height)
         materials.assign(body, body_material)
         parts.append(body)
 
-        # The display sits on the sloped face, inset from the edges.
+        # The display sits on the sloped top, inset from the edges. Its height is
+        # taken from the front so a shallow wedge does not push the panel through
+        # the case.
         panel = pieces._box(
             "ClockDisplay",
-            (width * 0.62, depth * 0.30, width * 0.012),
-            (0.0, -depth * 0.12, width * 0.265),
+            (width * face_ratio, depth * 0.34, width * 0.012),
+            (0.0, -depth * face_offset, front + (height - front) * 0.30),
         )
         materials.assign(panel, face_material)
         parts.append(panel)
 
-        for sign in (-1.0, 1.0):
+        # Two levers, sometimes a third in the middle -- both layouts are common.
+        offsets = (
+            (-width * 0.30, 0.0, width * 0.30)
+            if knob_count == 3
+            else (-width * 0.30, width * 0.30)
+        )
+        for offset in offsets:
             button = _cylinder(
                 "ClockButton",
-                width * 0.075,
+                knob,
                 width * 0.05,
-                (sign * width * 0.30, depth * 0.28, width * 0.36),
+                (offset, depth * 0.26, height),
             )
             materials.assign(button, button_material)
             parts.append(button)
     else:
-        depth = width * 0.62
-        height = width * 0.29
         body = pieces._box("ClockBody", (width, depth, height), (0.0, 0.0, height / 2))
         materials.assign(body, body_material)
         parts.append(body)
 
-        # Two dials, 75 mm across on a 200 mm case, so a little over a third of the
-        # width each -- they nearly fill the face, which is what makes the silhouette
-        # read as a clock rather than as a box.
         for sign in (-1.0, 1.0):
+            centre = (
+                sign * width * face_offset,
+                -depth / 2.0 - width * 0.010,
+                height * 0.58,
+            )
+            if spec.get("bezel"):
+                # A raised rim around the dial, as most cases have. Built as a
+                # slightly larger disc set a touch further out, so it reads as a
+                # surround rather than as a second dial.
+                rim = _disc_facing_y(
+                    "ClockBezel",
+                    width * face_ratio * 1.16,
+                    width * 0.010,
+                    (centre[0], centre[1] - width * 0.006, centre[2]),
+                )
+                materials.assign(rim, body_material)
+                parts.append(rim)
+
             dial = _disc_facing_y(
-                "ClockDial",
-                width * 0.185,
-                width * 0.02,
-                (sign * width * 0.24, -depth / 2.0 - width * 0.015, height * 0.55),
+                "ClockDial", width * face_ratio, width * 0.012, centre
             )
             materials.assign(dial, face_material)
             parts.append(dial)
 
             plunger = _cylinder(
                 "ClockPlunger",
-                width * 0.045,
-                width * 0.055,
-                (sign * width * 0.36, 0.0, height),
+                knob,
+                width * 0.05,
+                (sign * width * (face_offset + 0.10), 0.0, height),
             )
             materials.assign(plunger, button_material)
             parts.append(plunger)
@@ -318,21 +346,47 @@ def build_distractors(spec: dict) -> list[bpy.types.Object]:
         x, y, _ = distractor["location"]
         kind = distractor["kind"]
 
+        spin = math.radians(distractor["rotation_deg"])
+
+        # Things people put down while playing, each at its own proportions. The
+        # earlier set was a cup, a cube and a box sharing one size range, which made
+        # half of them the wrong scale and all of them read as toy blocks.
         if kind == "cup":
             mesh_obj = _cylinder(f"Cup{index}", size * 0.45, size * 1.2, (x, y, 0.0))
-        elif kind == "clock":
+        elif kind == "glass":
+            # Narrower and taller than a mug, and slightly tapered by being built
+            # at a smaller radius -- enough to read as a different object.
+            mesh_obj = _cylinder(f"Glass{index}", size * 0.34, size * 1.7, (x, y, 0.0))
+        elif kind == "notepad":
+            # Flat on the table: a pad is mostly outline, and its long low
+            # silhouette is nothing like a piece.
             mesh_obj = pieces._box(
-                f"Clock{index}",
-                (size * 1.6, size * 0.9, size * 0.9),
-                (x, y, size * 0.45),
-                rotation_z=math.radians(distractor["rotation_deg"]),
+                f"Notepad{index}",
+                (size, size * 0.72, size * 0.06),
+                (x, y, size * 0.03),
+                rotation_z=spin,
             )
+        elif kind == "phone":
+            mesh_obj = pieces._box(
+                f"Phone{index}",
+                (size * 0.50, size, size * 0.035),
+                (x, y, size * 0.018),
+                rotation_z=spin,
+            )
+        elif kind == "pen":
+            # Lying down, so the cylinder is rotated onto its side. A pen is the
+            # one piece of clutter thin enough to be mistaken for nothing at all,
+            # which is exactly why it is worth having in frame.
+            mesh_obj = _cylinder(
+                f"Pen{index}", size * 0.035, size, (x, y, size * 0.035)
+            )
+            mesh_obj.rotation_euler = (math.pi / 2.0, 0.0, spin)
         else:
             mesh_obj = pieces._box(
                 f"Block{index}",
                 (size, size, size),
                 (x, y, size / 2.0),
-                rotation_z=math.radians(distractor["rotation_deg"]),
+                rotation_z=spin,
             )
 
         materials.assign(

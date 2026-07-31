@@ -173,7 +173,7 @@ class TestClock:
     @staticmethod
     def footprint(clock) -> list[tuple[float, float]]:
         """The four corners of the clock's base, in world coordinates."""
-        depth = clock.width * (0.69 if clock.kind == "digital" else 0.62)
+        depth = clock.width * (0.69 if clock.kind == "digital" else 0.27)
         theta = math.radians(clock.rotation_deg)
         corners = []
         for sx in (-0.5, 0.5):

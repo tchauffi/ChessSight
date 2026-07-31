@@ -44,6 +44,48 @@ from chesssight.synth.textures import texture_sets
 
 HDRI_SUFFIXES = (".hdr", ".exr")
 
+#: Clutter a table beside a chess game actually carries. The originals were a cup,
+#: a block and a clock in colours drawn uniformly per channel, which produced
+#: saturated candy cubes -- next to photographed tables and varied clocks they were
+#: the most obviously synthetic objects left in frame. These are things people put
+#: down while playing, in the colours such things come in.
+DistractorKind = Literal["cup", "block", "notepad", "pen", "phone", "glass"]
+DISTRACTOR_KINDS: tuple[DistractorKind, ...] = (
+    "cup",
+    "block",
+    "notepad",
+    "pen",
+    "phone",
+    "glass",
+)
+
+#: Size in squares. A pen is not a mug and neither is a notepad, so the one shared
+#: range that used to cover all of them made half of them the wrong scale.
+DISTRACTOR_SIZES: dict[DistractorKind, tuple[float, float]] = {
+    "cup": (0.9, 1.5),
+    "block": (0.6, 1.4),
+    "notepad": (1.8, 3.2),
+    "pen": (1.6, 2.6),
+    "phone": (1.5, 2.6),
+    "glass": (0.7, 1.2),
+}
+
+#: Muted and plausible rather than uniform-random. Mugs are white, dark or glazed;
+#: phones are black or grey; paper is off-white or squared blue.
+DISTRACTOR_COLORS: dict[DistractorKind, tuple[list[float], ...]] = {
+    "cup": (
+        [0.82, 0.80, 0.76],
+        [0.12, 0.13, 0.15],
+        [0.20, 0.30, 0.42],
+        [0.55, 0.14, 0.12],
+    ),
+    "block": ([0.45, 0.32, 0.20], [0.30, 0.31, 0.33], [0.70, 0.66, 0.58]),
+    "notepad": ([0.86, 0.84, 0.78], [0.90, 0.90, 0.86], [0.25, 0.32, 0.48]),
+    "pen": ([0.06, 0.06, 0.07], [0.14, 0.22, 0.45], [0.55, 0.12, 0.10]),
+    "phone": ([0.05, 0.05, 0.06], [0.24, 0.25, 0.27], [0.80, 0.79, 0.76]),
+    "glass": ([0.80, 0.84, 0.82], [0.72, 0.78, 0.80]),
+}
+
 #: The material styles the Blender side knows how to build. Kept here so a typo in
 #: a config's weights fails at resolve time rather than rendering a plain board.
 MaterialKind = Literal["plastic", "wood", "marble", "plain", "textured"]
@@ -311,6 +353,46 @@ def resolve_lighting(config: GeneratorConfig, rng: random.Random) -> ResolvedLig
     )
 
 
+def luminance(color: list[float]) -> float:
+    """Perceived brightness, Rec. 709 weights."""
+    return 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+
+
+def separate_from(
+    color: list[float], others: list[list[float]], *, minimum: float
+) -> list[float]:
+    """Push a colour's brightness away from others until it is distinguishable.
+
+    Board squares and piece colours are drawn from independent palettes, so nothing
+    stopped a near-black square being paired with near-black pieces: measured on the
+    defaults, the closest gap was 0.030 in luminance, which renders an ebony piece
+    almost invisible against the square it stands on. The label still says a piece
+    is there. That is the same failure as a board with no chequer -- an image that
+    does not show what its annotation describes -- and no amount of *challenge* is
+    served by a target the detector cannot see.
+
+    Only brightness is moved, and only far enough to clear the threshold, so a hard
+    pairing stays hard: this sets a floor, not a comfortable margin.
+    """
+    result = list(color)
+    for other in others:
+        gap = luminance(result) - luminance(other)
+        if abs(gap) >= minimum:
+            continue
+        # Move away from the neighbour, or downward if it would clip past white.
+        direction = 1.0 if gap >= 0.0 else -1.0
+        target = luminance(other) + direction * minimum
+        if target > 1.0:
+            target = luminance(other) - minimum
+        current = max(luminance(result), 1e-4)
+        if target <= 0.0:
+            result = [minimum * 0.5] * 3
+        else:
+            scale = target / current
+            result = [min(1.0, max(0.0, channel * scale)) for channel in result]
+    return result
+
+
 def choose_material_style(
     weights: dict[str, float], base_color: list[float], rng: random.Random
 ) -> MaterialStyle:
@@ -382,6 +464,13 @@ def resolve_board(config: GeneratorConfig, rng: random.Random) -> ResolvedBoard:
     jitter = board.color_jitter.max
     light = _jitter_color(rng.choice(board.light_square_color), rng, jitter)
     dark = _jitter_color(rng.choice(board.dark_square_color), rng, jitter)
+
+    # Keep both squares clear of both piece colours. Done here rather than when the
+    # pieces are resolved because the board has the freer palette: a set is boxwood
+    # and ebony, but a board can be any of a dozen stains.
+    pieces_colors = [config.pieces.white_color, config.pieces.black_color]
+    light = separate_from(light, pieces_colors, minimum=board.min_piece_contrast)
+    dark = separate_from(dark, pieces_colors, minimum=board.min_piece_contrast)
     # Keyed off the dark squares: they carry the figure a real veneered or inlaid
     # board shows, and the light ones follow the same style so the two read as one
     # board rather than two materials butted together.
@@ -428,8 +517,29 @@ def resolve_clock(
 
     digital = rng.random() < scene.clock_digital_probability
     width = scene.clock_width.sample(rng) * square_size
-    # Depth follows the reference proportions the geometry is built from.
-    depth = width * (0.69 if digital else 0.62)
+
+    # Proportions are drawn, not fixed. Two rigid models would put the same two
+    # objects into every scene that has a clock, and a detector would learn those
+    # two silhouettes rather than the idea of a clock. The ranges straddle the
+    # reference dimensions rather than sitting on them: an analogue case is an
+    # *upright* box, roughly 220 wide, 60 deep and 125 tall, because its face has
+    # to carry two 75 mm dials side by side -- modelled as a 60 mm-tall slab, the
+    # dials came out wider than the case and rendered as a pair of headlights.
+    if digital:
+        depth_ratio = rng.uniform(0.58, 0.82)
+        height_ratio = rng.uniform(0.30, 0.48)
+        face_ratio = rng.uniform(0.45, 0.68)
+        face_offset = rng.uniform(0.08, 0.18)
+        knob_ratio = rng.uniform(0.055, 0.095)
+        slope = rng.uniform(0.42, 0.95)
+    else:
+        depth_ratio = rng.uniform(0.22, 0.36)
+        height_ratio = rng.uniform(0.46, 0.70)
+        face_ratio = rng.uniform(0.145, 0.195)
+        face_offset = rng.uniform(0.21, 0.27)
+        knob_ratio = rng.uniform(0.032, 0.055)
+        slope = 1.0
+    depth = width * depth_ratio
 
     half_board = BOARD_SIZE / 2.0 * square_size
     # Beside the board, never on it. Players sit at the two ends, so the clock goes
@@ -438,18 +548,31 @@ def resolve_clock(
     # measured against the clock's depth, since that is the extent facing the board:
     # using its width instead let a four-square-wide clock centred just outside the
     # edge reach back across two ranks of squares.
+    # Left or right of the board, drawn independently of where the camera stands.
+    # Coupling the two was tried and reverted: a real clock's position has nothing
+    # to do with where the photographer is, and letting the camera decide would bake
+    # a correlation into the dataset that does not exist in the world. Seeing the
+    # back of a clock half the time is not a defect -- it is what half the seats in
+    # the room see, and a detector should recognise the object from either side.
     side = rng.choice((0.0, 180.0))
     angle = math.radians(side)
     clearance = half_board + depth / 2.0 + scene.clock_offset.sample(rng) * square_size
     along = rng.uniform(-half_board * 0.45, half_board * 0.45)
     x = clearance * math.cos(angle) - along * math.sin(angle)
     y = clearance * math.sin(angle) + along * math.cos(angle)
-    body = (
-        [rng.uniform(0.02, 0.09)] * 3
-        if digital
-        # Analogue cases are wood or cream plastic far more often than black.
-        else _jitter_color([0.42, 0.28, 0.16], rng, 0.35)
+    # A wider palette than the two obvious ones. Real clocks come in stained wood,
+    # cream, red, green and black plastic, brushed grey -- and the point of this
+    # dataset is range, so the body colour is drawn from a spread rather than from
+    # one plausible default per kind.
+    palette = (
+        [0.42, 0.28, 0.16],  # stained wood
+        [0.78, 0.74, 0.66],  # cream
+        [0.05, 0.05, 0.06],  # black
+        [0.12, 0.20, 0.14],  # dark green
+        [0.35, 0.09, 0.08],  # oxblood
+        [0.30, 0.32, 0.35],  # grey
     )
+    body = _jitter_color(list(rng.choice(palette)), rng, 0.28)
     return ResolvedClock(
         kind="digital" if digital else "analogue",
         x=x,
@@ -458,8 +581,20 @@ def resolve_clock(
         # and the face looks away from the board rather than into it.
         rotation_deg=side + 90.0 + rng.uniform(-10.0, 10.0),
         width=width,
+        depth_ratio=depth_ratio,
+        height_ratio=height_ratio,
+        face_ratio=face_ratio,
+        face_offset=face_offset,
+        knob_ratio=knob_ratio,
+        # Most digital clocks have a pair of levers; some add a centre button.
+        knob_count=3 if digital and rng.random() < 0.35 else 2,
+        slope=slope,
+        bezel=(not digital) and rng.random() < 0.6,
         body_color=body,
-        face_color=_jitter_color([0.88, 0.87, 0.83], rng, 0.08),
+        # A dial face is off-white paper behind glass, and a digital display is a
+        # pale LCD. Jittered narrowly: at 0.08 relative the analogue dials came out
+        # orange, which reads as a warning light rather than as a clock.
+        face_color=_jitter_color([0.90, 0.89, 0.86], rng, 0.03),
         button_color=[rng.uniform(0.05, 0.25) for _ in range(3)],
     )
 
@@ -670,19 +805,22 @@ def resolve_scene(config: GeneratorConfig, rng: random.Random) -> ResolvedScene:
         for _ in range(scene.distractor_count.sample(rng)):
             # Keep clutter off the board itself so it never hides a square by accident
             # more often than the occlusion we deliberately want from pieces.
+            kind = rng.choice(DISTRACTOR_KINDS)
             angle = rng.uniform(0.0, 2 * math.pi)
             radius = rng.uniform(half_board * 1.25, half_board * 2.4)
             distractors.append(
                 Distractor(
-                    kind=rng.choice(["cup", "block", "clock"]),
+                    kind=kind,
                     location=[
                         radius * math.cos(angle),
                         radius * math.sin(angle),
                         0.0,
                     ],
-                    size=rng.uniform(0.5, 1.6) * square_size,
+                    size=rng.uniform(*DISTRACTOR_SIZES[kind]) * square_size,
                     rotation_deg=rng.uniform(0.0, 360.0),
-                    color=[rng.uniform(0.05, 0.9) for _ in range(3)],
+                    color=_jitter_color(
+                        list(rng.choice(DISTRACTOR_COLORS[kind])), rng, 0.25
+                    ),
                 )
             )
 
