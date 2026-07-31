@@ -269,3 +269,110 @@ class TestSuppressionAndCap:
         ]
         kept, _, _ = gate_to_board(detections, None)
         assert sum(1 for d in kept if d["label"] == BOARD_INDEX) == 1
+
+
+class TestPieceTracker:
+    """Steadying detections across frames.
+
+    Every test here is about a *sequence*; a tracker that behaves correctly on any
+    single frame can still flicker, which is the whole reason it exists.
+    """
+
+    @staticmethod
+    def piece(x0, y0, x1, y1, score, name="white_pawn", label=0):
+        return {"label": label, "name": name, "score": score, "box": [x0, y0, x1, y1]}
+
+    def tracker(self, **kwargs):
+        from chesssight.train.video import PieceTracker
+
+        return PieceTracker(enter_score=0.4, **kwargs)
+
+    def drawn(self, tracker, frames):
+        """How many pieces are drawn on each frame of a sequence."""
+        return [
+            len([d for d in tracker.update(frame) if d["label"] != 12])
+            for frame in frames
+        ]
+
+    def test_a_score_oscillating_around_the_threshold_stops_blinking(self):
+        # The headline case. Untracked, a piece scoring 0.45/0.35 alternately is
+        # drawn on every other frame; the low score still clears the keep
+        # threshold, so the track survives.
+        tracker = self.tracker()
+        scores = [0.45, 0.35, 0.45, 0.35, 0.45, 0.35]
+        counts = self.drawn(
+            tracker, [[self.piece(10, 10, 30, 60, score)] for score in scores]
+        )
+        # One frame to reach min_hits, then continuously present.
+        assert counts == [0, 1, 1, 1, 1, 1]
+
+    def test_a_piece_missing_for_a_frame_is_held(self):
+        # A hand passes over the board, or one frame blurs. Dropping the box and
+        # bringing it back is more distracting than holding it.
+        tracker = self.tracker()
+        present = [self.piece(10, 10, 30, 60, 0.9)]
+        counts = self.drawn(tracker, [present, present, [], [], present])
+        assert counts == [0, 1, 1, 1, 1]
+
+    def test_a_piece_gone_for_good_is_eventually_dropped(self):
+        from chesssight.train.video import MAX_MISSES
+
+        tracker = self.tracker()
+        present = [self.piece(10, 10, 30, 60, 0.9)]
+        counts = self.drawn(tracker, [present, present] + [[]] * (MAX_MISSES + 2))
+        assert counts[-1] == 0
+
+    def test_a_one_frame_false_positive_is_never_drawn(self):
+        # min_hits: a spurious high-scoring box on a single frame must not flash up.
+        tracker = self.tracker()
+        counts = self.drawn(
+            tracker, [[], [self.piece(300, 300, 320, 360, 0.95)], [], []]
+        )
+        assert counts == [0, 0, 0, 0]
+
+    def test_a_flapping_class_settles_on_one_label(self):
+        # Same box, alternating labels. Whichever wins, the caption must not change
+        # every frame -- and the winner should be the better-supported class.
+        tracker = self.tracker()
+        frames = [
+            [self.piece(10, 10, 30, 60, 0.9, "white_knight", 1)],
+            [self.piece(10, 10, 30, 60, 0.5, "white_bishop", 2)],
+            [self.piece(10, 10, 30, 60, 0.9, "white_knight", 1)],
+            [self.piece(10, 10, 30, 60, 0.5, "white_bishop", 2)],
+        ]
+        labels = [
+            [d["name"] for d in tracker.update(frame) if d["label"] != 12]
+            for frame in frames
+        ]
+        assert labels[1:] == [["white_knight"]] * 3
+
+    def test_box_jitter_is_damped(self):
+        tracker = self.tracker()
+        for _ in range(3):
+            tracker.update([self.piece(10, 10, 30, 60, 0.9)])
+        # A single frame's 8px wobble must move the drawn box by much less. Any
+        # jump large enough to break overlap is a different matter -- that is a
+        # piece being moved, and it correctly starts a new track rather than
+        # sliding the old box across the board.
+        drawn = tracker.update([self.piece(18, 10, 38, 60, 0.9)])
+        moved = drawn[0]["box"][0] - 10
+        assert 0 < moved < 4
+
+    def test_a_score_below_the_keep_threshold_cannot_start_a_track(self):
+        tracker = self.tracker()
+        weak = [self.piece(10, 10, 30, 60, 0.1)]
+        assert self.drawn(tracker, [weak] * 5) == [0] * 5
+
+    def test_the_board_passes_through_untracked(self):
+        from chesssight.train.labels import BOARD_INDEX
+
+        tracker = self.tracker()
+        board = {
+            "label": BOARD_INDEX,
+            "name": "board",
+            "score": 0.99,
+            "box": [0, 0, 500, 500],
+        }
+        # Drawn on the very first frame -- no min_hits delay, no smoothing lag.
+        drawn = tracker.update([board])
+        assert drawn == [board]

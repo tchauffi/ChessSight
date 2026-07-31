@@ -31,7 +31,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -346,6 +346,162 @@ def gate_to_board(
     return kept, last_board, age
 
 
+#: IoU above which a detection is taken to be the same physical piece as an
+#: existing track. Deliberately loose: pieces barely move between frames, so a
+#: near-miss is a jittering box on one piece far more often than it is two pieces.
+MATCH_IOU = 0.35
+
+#: A track must clear the entry threshold to be *created*, but only this fraction
+#: of it to *survive*. Two thresholds rather than one is the whole point: a single
+#: threshold makes a piece scoring around it blink on and off every other frame,
+#: which is most of the flicker.
+KEEP_RATIO = 0.5
+
+#: Detections a track needs before it is drawn, and detection frames it may coast
+#: through unseen before it is dropped. The first suppresses one-frame false
+#: positives, the second bridges the momentary misses of a real piece -- a hand
+#: passing over the board, a blurred frame.
+MIN_HITS = 2
+MAX_MISSES = 4
+
+#: Weight on the remembered box when a track is updated. Pieces are static for
+#: most of a game, so a heavily-damped box removes the few-pixel per-frame wobble
+#: without lagging visibly when one is actually moved.
+BOX_SMOOTHING = 0.7
+
+
+def iou(first: list[float], second: list[float]) -> float:
+    """Intersection over union of two boxes."""
+    ax0, ay0, ax1, ay1 = first
+    bx0, by0, bx1, by1 = second
+    ix = max(0.0, min(ax1, bx1) - max(ax0, bx0))
+    iy = max(0.0, min(ay1, by1) - max(ay0, by0))
+    intersection = ix * iy
+    if intersection <= 0:
+        return 0.0
+    union = (
+        max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+        + max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+        - intersection
+    )
+    return intersection / union if union > 0 else 0.0
+
+
+@dataclass
+class Track:
+    """One physical piece, followed across frames."""
+
+    box: list[float]
+    score: float
+    hits: int = 1
+    misses: int = 0
+    #: Score-weighted votes per class. A piece whose class flickers between two
+    #: near-tied labels gets one steady answer instead of alternating captions.
+    votes: dict[int, float] = field(default_factory=dict)
+
+    @property
+    def label(self) -> int:
+        return max(self.votes, key=lambda key: self.votes[key])
+
+
+class PieceTracker:
+    """Turn per-frame detections into steady tracks.
+
+    Three independent causes of flicker, three mechanisms:
+
+    * a score oscillating around the threshold -> enter high, survive low;
+    * a class label alternating between near-tied guesses -> vote over the track's
+      whole history rather than trusting the current frame;
+    * box coordinates wobbling a few pixels -> exponentially smooth them.
+
+    Association is greedy by IoU with no motion model. A Kalman filter earns its
+    keep when targets move predictably between frames; chess pieces are stationary
+    for seconds at a time and then teleport when a hand moves them, which is the
+    one case a constant-velocity prior gets *wrong*.
+    """
+
+    def __init__(
+        self,
+        *,
+        enter_score: float,
+        keep_ratio: float = KEEP_RATIO,
+        match_iou: float = MATCH_IOU,
+        min_hits: int = MIN_HITS,
+        max_misses: int = MAX_MISSES,
+        smoothing: float = BOX_SMOOTHING,
+    ) -> None:
+        self.enter_score = enter_score
+        self.keep_score = enter_score * keep_ratio
+        self.match_iou = match_iou
+        self.min_hits = min_hits
+        self.max_misses = max_misses
+        self.smoothing = smoothing
+        self.tracks: list[Track] = []
+        #: Label -> display name, accumulated across frames. A coasting track may
+        #: hold a class that no detection in the current frame carries.
+        self.names: dict[int, str] = {}
+
+    def update(self, detections: list[dict]) -> list[dict]:
+        """Fold one frame's detections in and return what should be drawn."""
+        pieces = sorted(
+            (d for d in detections if d["label"] != BOARD_INDEX),
+            key=lambda d: float(d["score"]),
+            reverse=True,
+        )
+        self.names.update({d["label"]: d["name"] for d in pieces})
+
+        unmatched = list(self.tracks)
+        for detection in pieces:
+            if detection["score"] < self.keep_score:
+                continue
+            best, best_iou = None, self.match_iou
+            for track in unmatched:
+                overlap = iou(detection["box"], track.box)
+                if overlap >= best_iou:
+                    best, best_iou = track, overlap
+            if best is None:
+                if detection["score"] >= self.enter_score:
+                    self.tracks.append(
+                        Track(
+                            box=list(detection["box"]),
+                            score=float(detection["score"]),
+                            votes={detection["label"]: float(detection["score"])},
+                        )
+                    )
+                continue
+
+            unmatched.remove(best)
+            keep = self.smoothing
+            best.box = [
+                keep * old + (1.0 - keep) * new
+                for old, new in zip(best.box, detection["box"], strict=True)
+            ]
+            best.score = keep * best.score + (1.0 - keep) * float(detection["score"])
+            best.votes[detection["label"]] = best.votes.get(
+                detection["label"], 0.0
+            ) + float(detection["score"])
+            best.hits += 1
+            best.misses = 0
+
+        for track in unmatched:
+            track.misses += 1
+        self.tracks = [t for t in self.tracks if t.misses <= self.max_misses]
+
+        drawn = [
+            {
+                "box": list(track.box),
+                "label": track.label,
+                "name": self.names.get(track.label, str(track.label)),
+                "score": track.score,
+            }
+            for track in self.tracks
+            if track.hits >= self.min_hits
+        ]
+        # The board is not tracked: it is one object, already stabilised by
+        # gate_to_board's memory, and smoothing it would lag a camera cut.
+        return drawn + [d for d in detections if d["label"] == BOARD_INDEX]
+
+
 def annotate_video(
     checkpoint: Path,
     source: Path,
@@ -355,6 +511,7 @@ def annotate_video(
     top_k: int | None = None,
     stride: int = 1,
     board_gate: bool = True,
+    smooth: bool = True,
     max_pieces: int = MAX_PIECES,
     max_seconds: float | None = None,
     device: str | None = None,
@@ -365,6 +522,12 @@ def annotate_video(
     Between detection frames the previous predictions are redrawn -- at typical
     hand-held panning speeds the boxes lag imperceptibly at stride 2-3, and
     inference cost falls by the same factor.
+
+    With ``smooth``, detections are associated across frames by a
+    :class:`PieceTracker` rather than drawn independently. Detection then runs at a
+    *lower* threshold than the one displayed, so the tracker can see the marginal
+    scores it needs to hold a piece through a bad frame; nothing below the display
+    threshold is ever drawn on its own.
     """
     import time
 
@@ -383,6 +546,12 @@ def annotate_video(
             "squashed, so consider --top-k or `chesssight train calibrate` first"
         )
 
+    tracker = PieceTracker(enter_score=threshold) if smooth else None
+    # Detect below what is displayed so the tracker sees the marginal scores that
+    # let it hold a piece through a blurred frame. Without a tracker this would
+    # simply draw junk, so it is tied to `smooth`.
+    detect_threshold = threshold * KEEP_RATIO if smooth else threshold
+
     writer = FrameWriter(destination, info.width, info.height, info.fps)
     detections: list[dict] = []
     counts: list[int] = []
@@ -399,7 +568,7 @@ def annotate_video(
                     processor,
                     frame,
                     resolved,
-                    threshold=threshold,
+                    threshold=detect_threshold,
                     top_k=top_k,
                     calibration=calibration,
                 )
@@ -408,6 +577,10 @@ def annotate_video(
                     detections, last_board, board_age = gate_to_board(
                         detections, last_board, age=board_age
                     )
+                # Track before capping: the cap keeps the 32 highest *instantaneous*
+                # scores, which is exactly the ranking the tracker exists to steady.
+                if tracker is not None:
+                    detections = tracker.update(detections)
                 detections = cap_pieces(detections, max_pieces)
             pieces = sum(1 for d in detections if d["label"] != BOARD_INDEX)
             counts.append(pieces)

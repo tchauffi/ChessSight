@@ -957,6 +957,16 @@ def train_video(
             "so this removes most out-of-domain false positives for free.",
         ),
     ] = True,
+    smooth: Annotated[
+        bool,
+        typer.Option(
+            "--smooth/--no-smooth",
+            help="Associate detections across frames instead of drawing each one "
+            "independently: a piece has to be seen twice before it appears and may "
+            "coast through a few bad frames, its class is voted over its history, "
+            "and its box is damped. This is what removes flicker.",
+        ),
+    ] = True,
     max_pieces: Annotated[
         int,
         typer.Option(
@@ -983,6 +993,7 @@ def train_video(
         top_k=top_k,
         stride=max(1, stride),
         board_gate=board_gate,
+        smooth=smooth,
         max_pieces=max_pieces,
         max_seconds=max_seconds,
         device=device,
