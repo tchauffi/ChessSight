@@ -42,10 +42,22 @@ def detection_on(rank: int, file: int, class_id: int, score: float = 0.9) -> dic
     }
 
 
-def test_the_foot_is_the_bottom_centre_not_the_middle():
+def test_the_foot_is_near_the_bottom_centre_not_the_middle():
     # Pieces are tall and shot from above the table; the box centre floats up the
     # piece and lands a square or more behind where it actually stands.
-    assert foot([10.0, 20.0, 30.0, 60.0]) == (20.0, 60.0)
+    x, y = foot([10.0, 20.0, 30.0, 60.0])
+    assert x == 20.0  # horizontally centred
+    middle, bottom = 40.0, 60.0
+    assert bottom - 0.1 * (bottom - middle) <= y <= bottom
+    assert y > middle
+
+
+def test_the_foot_sits_just_inside_the_bottom_edge():
+    # Not *on* the edge: the bottom of a box is the nearest-to-camera point of the
+    # base, forward of where the piece's axis meets the board, so a piece standing
+    # near a square boundary is otherwise read one square over. Worth 5 points of
+    # board-exact accuracy on synthetic boards.
+    assert foot([0.0, 0.0, 10.0, 100.0])[1] < 100.0
 
 
 class TestGridFrom:

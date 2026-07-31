@@ -21,10 +21,19 @@ from chesssight.data.geometry import board_to_image_homography
 from chesssight.train.labels import index_to_class_id, is_piece
 
 #: Where a piece touches the board, as a fraction of its box. Pieces are tall and
-#: photographed from above the table, so the bottom-centre of a box is the point that
-#: actually stands on a square; the box centre floats somewhere up the piece.
+#: photographed from above the table, so the contact point is near the bottom of the
+#: box; the box centre floats up the piece and lands a square or more behind.
 FOOT_X = 0.5
-FOOT_Y = 1.0
+
+#: Just *above* the bottom edge, not on it. The bottom of a 2D box is the
+#: nearest-to-camera point of the piece's base, which sits forward of where its axis
+#: meets the board, so a piece standing near a boundary tips over it. Measured over
+#: 400 synthetic boards, where the ground truth is exact: board-exact 70.5% at 1.00
+#: against 76.0% at 0.96, with 0.94-0.98 all within half a point of the peak. The
+#: value was chosen on synthetic data and *then* checked against ChessReD, where it
+#: takes the ground-truth ceiling from 98.7% to 100% -- so it is not a fit to the
+#: real test set.
+FOOT_Y = 0.96
 
 
 def foot(box: list[float]) -> tuple[float, float]:
