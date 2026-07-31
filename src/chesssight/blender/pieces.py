@@ -500,11 +500,31 @@ class PieceSet:
             bl_utils.unlink(prototype)
             self.prototypes[letter] = prototype
 
-        self.white_material = materials.piece_material(
-            "PieceWhite", tuple(spec["white_color"]), roughness=spec["roughness"]
+        # Both colours share the scene's style: a set is turned from one timber or
+        # cut from one stone, and only the finish differs between the two sides.
+        style = spec.get("material")
+        # Pieces are the most repeated object in frame -- eight identical pawns a
+        # side -- so they get the largest per-instance variation, and the smallest
+        # bevel, since a turned piece has softened rather than chamfered edges.
+        self.white_material = materials.organic(
+            materials.styled(
+                "PieceWhite",
+                tuple(spec["white_color"]),
+                style,
+                roughness=spec["roughness"],
+                maps=spec.get("light_maps"),
+            ),
+            bevel_radius=0.003,
         )
-        self.black_material = materials.piece_material(
-            "PieceBlack", tuple(spec["black_color"]), roughness=spec["roughness"]
+        self.black_material = materials.organic(
+            materials.styled(
+                "PieceBlack",
+                tuple(spec["black_color"]),
+                style,
+                roughness=spec["roughness"],
+                maps=spec.get("dark_maps"),
+            ),
+            bevel_radius=0.003,
         )
 
     def instantiate(self, class_id: int, name: str) -> bpy.types.Object:

@@ -162,6 +162,14 @@ class BoardConfig(StrictModel):
     #: the same proportion and keep their hue. An absolute offset would leave light
     #: squares almost unchanged while randomising dark ones into a different colour.
     color_jitter: FloatRange = FloatRange(min=-0.18, max=0.18)
+    #: What the board is made of, drawn per scene by weight. Boards are veneered
+    #: wood or inlaid stone far more often than they are flat colour, and against a
+    #: photographed tabletop a flat-colour board became the most obviously rendered
+    #: thing in the frame.
+    material_styles: dict[str, float] = {"wood": 0.55, "marble": 0.25, "plain": 0.20}
+    #: Grain scale for the squares, in repeats per square. Randomised because a
+    #: fixed figure size is itself a constant a detector can key on.
+    grain_scale: FloatRange = FloatRange(min=1.5, max=6.0)
 
 
 class PieceSetChoice(StrictModel):
@@ -201,6 +209,29 @@ class PiecesConfig(StrictModel):
     white_color: RGB = [0.90, 0.87, 0.80]
     black_color: RGB = [0.07, 0.06, 0.06]
     roughness: FloatRange = FloatRange(min=0.1, max=0.7)
+    #: What the pieces are made of, drawn per scene by weight. Real sets are turned
+    #: boxwood, moulded plastic or cut stone, and the three look nothing alike under
+    #: the same light -- plastic reads as a smooth coloured solid, wood shows rings
+    #: around the axis it was turned on, marble shows veins running through it.
+    #: Weights, not a single choice, so one dataset carries all three.
+    material_styles: dict[str, float] = {"plastic": 0.45, "wood": 0.35, "marble": 0.20}
+    #: Veneer textures used when the wood style is drawn, box-projected onto the
+    #: pieces. Curated separately from the table's: a floor texture's plank joins
+    #: wrap a piece as hoops and make it look coopered, so only seamless raw-timber
+    #: veneers belong here. Empty, or a missing texture, falls back to procedural
+    #: grain -- so the pipeline still runs with no downloaded assets.
+    veneers: dict[str, str] = {
+        "light": "oak_veneer_01",
+        "dark": "rosewood_veneer1",
+    }
+    #: Per-scene colour shift on the veneers. Two textures cannot cover the range of
+    #: timbers real sets are made from, but a hue rotation and a brightness change
+    #: turn oak and rosewood into something nearer walnut, cherry or mahogany. Kept
+    #: narrow: a large hue rotation makes wood green, which is domain *noise*.
+    #: Applied to both sides together, since a set is finished as a pair.
+    veneer_hue_shift: FloatRange = FloatRange(min=-0.06, max=0.06)
+    veneer_saturation: FloatRange = FloatRange(min=0.75, max=1.25)
+    veneer_brightness: FloatRange = FloatRange(min=0.8, max=1.25)
     #: Per-piece placement noise, as a fraction of a square.
     position_jitter: FloatRange = FloatRange(min=-0.16, max=0.16)
     #: Full spin for the radially symmetric pieces -- nobody aligns a pawn.
@@ -264,6 +295,33 @@ class SceneConfig(StrictModel):
         [0.10, 0.10, 0.12],
     ]
     table_roughness: FloatRange = FloatRange(min=0.2, max=0.9)
+    #: A directory of Poly Haven PBR maps (fetch with `chesssight assets textures`).
+    #: With one configured the table is a photographed surface rather than a flat
+    #: colour, which is the single largest untextured area in the frame. Missing
+    #: directory falls back to the flat colour, so the pipeline still runs with no
+    #: external assets.
+    texture_dir: Path | None = None
+    texture_probability: Probability = 0.85
+    #: How many times the map repeats across the *whole table*, not per unit. Stated
+    #: this way because the table is 20-45 squares across, so a per-unit scale of 1
+    #: tiles the map thirty times and turns oak into fine fabric. Randomised per
+    #: scene: one fixed grain size is itself a constant to memorise.
+    texture_scale: FloatRange = FloatRange(min=1.5, max=5.0)
+    texture_rotation_deg: FloatRange = FloatRange(min=0.0, max=360.0)
+    #: Multiplied into the diffuse map, so twelve downloads cover more than twelve
+    #: tables. Kept near white -- a strong tint reads as coloured light, not as a
+    #: different wood.
+    texture_tint: FloatRange = FloatRange(min=0.75, max=1.0)
+    texture_roughness_shift: FloatRange = FloatRange(min=-0.15, max=0.15)
+    #: Same idea as the veneers: fourteen table textures go further when each can
+    #: appear as a lighter or darker version of itself. Deliberately *tighter* than
+    #: the veneers' range, and mostly brightness rather than hue -- the table is a
+    #: large flat area, and a rotation the pieces tolerate turns a whole tabletop
+    #: mustard-yellow. A table nobody owns is domain noise, not randomisation: it
+    #: spends a sample teaching the detector a colour it will never meet.
+    texture_hue_shift: FloatRange = FloatRange(min=-0.02, max=0.02)
+    texture_saturation: FloatRange = FloatRange(min=0.85, max=1.15)
+    texture_brightness: FloatRange = FloatRange(min=0.8, max=1.2)
     distractor_count: IntRange = IntRange(min=0, max=3)
     distractor_probability: Probability = 0.3
 

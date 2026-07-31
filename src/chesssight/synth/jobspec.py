@@ -84,6 +84,38 @@ class ResolvedLighting(StrictModel):
     lamps: list[ResolvedLamp]
 
 
+class MaterialStyle(StrictModel):
+    """What a surface is made of, and the parameters its procedural needs.
+
+    Resolved project-side like everything else, so the Blender layer only ever
+    selects a node graph -- it never draws a random number.
+    """
+
+    kind: Literal["plastic", "wood", "marble", "plain"]
+    scale: float = Field(default=3.0, gt=0)
+    distortion: float = Field(default=4.0, ge=0)
+    #: How far the figure departs from the body colour: the growth ring in wood, the
+    #: vein in marble. A *relative* strength, not an absolute second colour, because
+    #: one style is applied to both a near-white and a near-black set. An absolute
+    #: accent tuned on the white pieces is ten times lighter than a black piece's
+    #: base and turns it into a zebra; a relative one darkens or lightens each side
+    #: by the same proportion of its own colour.
+    contrast: float = Field(default=0.2, ge=0.0, le=0.9)
+    #: Marble only: what fraction of the surface the vein occupies. Real stone is
+    #: roughly nine parts body to one part vein; above about 0.25 it stops reading
+    #: as rock and starts reading as camouflage.
+    vein_width: float = Field(default=0.14, gt=0.0, le=0.4)
+    #: Which way the figure runs, in degrees. Randomised so a dataset does not have
+    #: every vein and every grain line at the same angle.
+    rotation_deg: Vec3 = [0.0, 0.0, 0.0]
+    #: Colour adjustment applied to a *photographed* texture, so that the two usable
+    #: veneers cover a range of timbers rather than appearing identically in every
+    #: wooden set. Hue is an offset from no-change, not an absolute.
+    hue_shift: float = Field(default=0.0, ge=-0.5, le=0.5)
+    saturation: float = Field(default=1.0, ge=0.0, le=2.0)
+    brightness: float = Field(default=1.0, ge=0.0, le=2.0)
+
+
 class ResolvedBoard(StrictModel):
     square_size: float = Field(gt=0)
     thickness: float = Field(gt=0)
@@ -91,6 +123,8 @@ class ResolvedBoard(StrictModel):
     light_color: RGB
     dark_color: RGB
     roughness: float = Field(ge=0, le=1)
+    #: None keeps the plain flat-colour squares, which is also the default.
+    material: MaterialStyle | None = None
 
 
 class PiecePlacement(StrictModel):
@@ -143,6 +177,12 @@ class ResolvedPieces(StrictModel):
     white_color: RGB
     black_color: RGB
     roughness: float = Field(ge=0, le=1)
+    material: MaterialStyle = MaterialStyle(kind="plastic")
+    #: Photographed veneer for each side, when the drawn style is wood and suitable
+    #: textures exist. Box-projected, because a lathed piece carries no UV map.
+    #: None falls back to the procedural grain.
+    light_maps: dict[str, str] | None = None
+    dark_maps: dict[str, str] | None = None
     placements: list[PiecePlacement]
     #: Pieces beside the board. They appear in the image and in ``pieces``, but
     #: never in the grid.
@@ -157,11 +197,30 @@ class Distractor(StrictModel):
     color: RGB
 
 
+class TableTexture(StrictModel):
+    """A photographed surface for the tabletop, resolved to absolute paths."""
+
+    slug: str
+    #: Map name -> absolute path. Every map the material needs is present, or the
+    #: whole texture is dropped: a diffuse map wired up without its roughness map
+    #: renders shinier than intended rather than failing visibly.
+    maps: dict[str, str]
+    scale: float = Field(gt=0)
+    rotation_deg: float
+    tint: RGB
+    roughness_shift: float
+    hue_shift: float = Field(default=0.0, ge=-0.5, le=0.5)
+    saturation: float = Field(default=1.0, ge=0.0, le=2.0)
+    brightness: float = Field(default=1.0, ge=0.0, le=2.0)
+
+
 class ResolvedScene(StrictModel):
     table_size: float = Field(gt=0)
     table_thickness: float = Field(gt=0)
     table_color: RGB
     table_roughness: float = Field(ge=0, le=1)
+    #: None means the flat colour above is used, which is also the no-assets path.
+    table_texture: TableTexture | None = None
     distractors: list[Distractor]
 
 

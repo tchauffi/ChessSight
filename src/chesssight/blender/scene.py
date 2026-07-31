@@ -117,15 +117,30 @@ def build_table(
     table = _box(
         "Table", -extent, extent, -extent, extent, z - spec["table_thickness"], z
     )
-    materials.assign(
-        table,
-        materials.wood(
+    texture = spec.get("table_texture")
+    if texture:
+        # A photographed surface when one was resolved. The tabletop is the largest
+        # area in frame after the board, and procedural noise never made it read as
+        # a material rather than a tinted plane.
+        material = materials.textured(
+            "TableTop",
+            texture["maps"],
+            scale=texture["scale"],
+            rotation=math.radians(texture["rotation_deg"]),
+            tint=tuple(texture["tint"]),
+            roughness_shift=texture["roughness_shift"],
+            hue_shift=texture.get("hue_shift", 0.0),
+            saturation=texture.get("saturation", 1.0),
+            brightness=texture.get("brightness", 1.0),
+        )
+    else:
+        material = materials.wood(
             "TableTop",
             tuple(spec["table_color"]),
             roughness=spec["table_roughness"],
             grain_scale=3.0,
-        ),
-    )
+        )
+    materials.assign(table, material)
     bl_utils.tag(table, "table")
     return table
 

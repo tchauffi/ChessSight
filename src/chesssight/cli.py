@@ -989,6 +989,52 @@ def train_video(
     )
 
 
+@assets_app.command("textures")
+def assets_textures(
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Where to write the texture maps.")
+    ] = Path("~/assets/chesssight/textures"),
+    resolution: Annotated[
+        str, typer.Option("--resolution", help="Poly Haven resolution, e.g. 1k/2k/4k.")
+    ] = "2k",
+    only: Annotated[
+        str | None,
+        typer.Option(
+            "--only", help="Comma-separated group names: wood, parquet, cloth, stone."
+        ),
+    ] = None,
+) -> None:
+    """Download CC0 PBR surface textures for the table the board stands on.
+
+    The tabletop is the largest area in frame after the board, and it was a flat
+    colour: procedural noise makes a surface non-uniform, but it cannot produce
+    figure that runs, joins between boards, or varnish pooling unevenly over wear.
+    Point `scene.texture_dir` at the result.
+    """
+    from chesssight.synth.textures import CURATED, download
+
+    slugs = None
+    if only:
+        groups = [g.strip() for g in only.split(",")]
+        unknown = [g for g in groups if g not in CURATED]
+        if unknown:
+            typer.echo(f"unknown groups {unknown}; have {sorted(CURATED)}", err=True)
+            raise typer.Exit(1)
+        slugs = [slug for g in groups for slug in CURATED[g]]
+
+    result = download(
+        Path(out), slugs=slugs, resolution=resolution, progress=typer.echo
+    )
+    typer.echo(
+        f"{result['total']} textures in {result['dir']} "
+        f"({result['downloaded']} fetched, {result['skipped']} already present)"
+    )
+    typer.echo("\nUse them with:")
+    typer.echo("  scene:")
+    typer.echo(f"    texture_dir: {out}")
+    typer.echo("    texture_probability: 0.85")
+
+
 @assets_app.command("hdri")
 def assets_hdri(
     out: Annotated[

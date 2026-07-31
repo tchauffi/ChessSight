@@ -140,20 +140,49 @@ def build_board(spec: dict) -> dict:
     dark = tuple(spec["dark_color"])
     roughness = spec["roughness"]
 
+    # Both colours get the same style so the two square sets read as one board
+    # rather than as two materials butted together.
+    style = spec.get("material")
     squares = build_squares(
         square_size,
-        materials.wood("SquareLight", light, roughness=roughness, coat=0.15),
-        materials.wood("SquareDark", dark, roughness=roughness, coat=0.15),
+        # Squares vary a touch square to square, as an inlaid board does, but far
+        # less than the pieces: a chequerboard whose squares differ wildly reads as
+        # damaged rather than as handmade.
+        materials.organic(
+            materials.styled(
+                "SquareLight", light, style, roughness=roughness, coat=0.15, flat=True
+            ),
+            bevel_radius=0.002,
+            instance_value=0.04,
+            instance_saturation=0.03,
+        ),
+        materials.organic(
+            materials.styled(
+                "SquareDark", dark, style, roughness=roughness, coat=0.15, flat=True
+            ),
+            bevel_radius=0.002,
+            instance_value=0.04,
+            instance_saturation=0.03,
+        ),
     )
 
     slab = build_slab(square_size, spec["thickness"], spec["border_width"])
     materials.assign(
         slab,
-        materials.wood(
-            "BoardFrame",
-            tuple(channel * 0.75 for channel in dark),
-            roughness=min(1.0, roughness + 0.1),
-            grain_scale=6.0,
+        # The frame carries the largest bevel in the scene: it is the one edge a
+        # hand actually rests on, and a sharp arris there is the clearest CG tell.
+        materials.organic(
+            materials.styled(
+                "BoardFrame",
+                tuple(channel * 0.75 for channel in dark),
+                style,
+                roughness=min(1.0, roughness + 0.1),
+                coat=0.1,
+                flat=True,
+            ),
+            bevel_radius=0.010,
+            instance_value=0.03,
+            instance_saturation=0.02,
         ),
     )
 

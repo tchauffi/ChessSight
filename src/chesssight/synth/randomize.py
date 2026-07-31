@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import random
 from pathlib import Path
+from typing import Literal, cast
 
 from chesssight.data.fen import (
     BOARD_SIZE,
@@ -19,11 +20,12 @@ from chesssight.data.fen import (
     iter_occupied,
 )
 from chesssight.synth import profiles
-from chesssight.synth.config import GeneratorConfig, PiecesConfig
+from chesssight.synth.config import GeneratorConfig, PiecesConfig, SceneConfig
 from chesssight.synth.jobspec import (
     CapturedPlacement,
     Distractor,
     JobSpec,
+    MaterialStyle,
     PiecePlacement,
     ResolvedBoard,
     ResolvedCamera,
@@ -33,11 +35,18 @@ from chesssight.synth.jobspec import (
     ResolvedPieces,
     ResolvedRender,
     ResolvedScene,
+    TableTexture,
     board_to_world,
 )
 from chesssight.synth.seeds import derive_rng
+from chesssight.synth.textures import texture_sets
 
 HDRI_SUFFIXES = (".hdr", ".exr")
+
+#: The material styles the Blender side knows how to build. Kept here so a typo in
+#: a config's weights fails at resolve time rather than rendering a plain board.
+MaterialKind = Literal["plastic", "wood", "marble", "plain"]
+MATERIAL_KINDS: frozenset[str] = frozenset(("plastic", "wood", "marble", "plain"))
 
 #: Height of the tallest piece in square units, before per-scene style jitter. The
 #: camera has to leave room for a king standing at the far edge, which at grazing
@@ -299,16 +308,103 @@ def resolve_lighting(config: GeneratorConfig, rng: random.Random) -> ResolvedLig
     )
 
 
+def choose_material_style(
+    weights: dict[str, float], base_color: list[float], rng: random.Random
+) -> MaterialStyle:
+    """Draw what a surface is made of, and the parameters its procedural needs.
+
+    The accent colour is derived from the base rather than drawn independently: a
+    growth ring is the same timber a shade darker, and a marble vein is the same
+    stone with a mineral streak. Sampling the two colours separately produces
+    two-tone plastic, which is the look this is meant to avoid.
+    """
+    kinds = list(weights)
+    unknown = [k for k in kinds if k not in MATERIAL_KINDS]
+    if unknown:
+        # A typo in `material_styles` would otherwise fall through to the plain
+        # solid and quietly produce a dataset with none of the style asked for.
+        raise ValueError(
+            f"unknown material style(s) {unknown}; have {sorted(MATERIAL_KINDS)}"
+        )
+    (drawn,) = rng.choices(kinds, weights=[weights[k] for k in kinds], k=1)
+    kind = cast(MaterialKind, drawn)
+    if kind == "marble":
+        # Veins run darker than the body on light stone and lighter on dark stone,
+        # so the contrast survives whichever way the palette went. Kept moderate:
+        # a near-black vein on near-white stone reads as printed pattern, not rock.
+        return MaterialStyle(
+            kind=kind,
+            # Low frequency on purpose. Measured on a parameter sweep: above ~1.0
+            # there are enough bands across a piece that the ramp catches every
+            # peak and the result is regular pinstripes rather than veining.
+            scale=rng.uniform(0.3, 0.8),
+            # Enough to bend the bands well out of line. Below ~3 they stay
+            # straight and read as stripes; above ~8 they curl into closed blobs.
+            distortion=rng.uniform(3.5, 6.0),
+            contrast=rng.uniform(0.28, 0.45),
+            vein_width=rng.uniform(0.12, 0.18),
+            rotation_deg=[rng.uniform(0.0, 360.0) for _ in range(3)],
+        )
+    if kind == "wood":
+        return MaterialStyle(
+            kind=kind,
+            # Also measured on a sweep: past ~2.5 the rings tighten into regular
+            # banding that reads as turned laminate rather than as timber.
+            scale=rng.uniform(0.8, 2.5),
+            distortion=rng.uniform(1.5, 4.0),
+            # Grain is a modulation of one timber, not two tones: a fifth of the
+            # body colour reads as figure, a half reads as paint.
+            contrast=rng.uniform(0.12, 0.28),
+            rotation_deg=[rng.uniform(0.0, 360.0) for _ in range(3)],
+        )
+    return MaterialStyle(kind=kind, scale=1.0, distortion=0.0, contrast=0.0)
+
+
 def resolve_board(config: GeneratorConfig, rng: random.Random) -> ResolvedBoard:
     board = config.board
     jitter = board.color_jitter.max
+    light = _jitter_color(rng.choice(board.light_square_color), rng, jitter)
+    dark = _jitter_color(rng.choice(board.dark_square_color), rng, jitter)
+    # Keyed off the dark squares: they carry the figure a real veneered or inlaid
+    # board shows, and the light ones follow the same style so the two read as one
+    # board rather than two materials butted together.
+    style = choose_material_style(board.material_styles, dark, rng)
+    # The board is eight squares across, so a scale stated per *square* runs at
+    # roughly twenty times the frequency the same style uses on a piece -- which
+    # turned marble veining into dense scribble. Divide into board units so the two
+    # surfaces carry figure at a comparable size.
+    style = style.model_copy(
+        update={"scale": board.grain_scale.sample(rng) / BOARD_SIZE}
+    )
     return ResolvedBoard(
         square_size=board.square_size,
         thickness=board.thickness.sample(rng),
         border_width=board.border_width.sample(rng),
-        light_color=_jitter_color(rng.choice(board.light_square_color), rng, jitter),
-        dark_color=_jitter_color(rng.choice(board.dark_square_color), rng, jitter),
+        light_color=light,
+        dark_color=dark,
         roughness=board.roughness.sample(rng),
+        material=style,
+    )
+
+
+def choose_veneers(
+    config: GeneratorConfig, material: MaterialStyle, pieces: PiecesConfig
+) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    """Photographed veneer maps for each side, when the style is wood.
+
+    Looked up by slug rather than drawn at random: the two sides want a *pair* --
+    a pale timber against a dark one, as a real set is made -- and picking two
+    veneers independently would sometimes give two pale ones and no contrast.
+    """
+    texture_dir = config.scene.texture_dir
+    if material.kind != "wood" or not pieces.veneers or texture_dir is None:
+        return None, None
+    available = {
+        entry["slug"]: entry["maps"] for entry in texture_sets(texture_dir)
+    }
+    return (
+        available.get(pieces.veneers.get("light", "")),
+        available.get(pieces.veneers.get("dark", "")),
     )
 
 
@@ -357,6 +453,17 @@ def resolve_pieces(
     )
 
     provider, manifest = choose_piece_set(pieces, rng)
+    white_color = _jitter_color(pieces.white_color, rng, 0.05)
+    black_color = _jitter_color(pieces.black_color, rng, 0.03)
+    material = choose_material_style(pieces.material_styles, white_color, rng)
+    material = material.model_copy(
+        update={
+            "hue_shift": pieces.veneer_hue_shift.sample(rng),
+            "saturation": pieces.veneer_saturation.sample(rng),
+            "brightness": pieces.veneer_brightness.sample(rng),
+        }
+    )
+    light_maps, dark_maps = choose_veneers(config, material, pieces)
 
     return ResolvedPieces(
         provider=provider,
@@ -366,9 +473,12 @@ def resolve_pieces(
         taper=pieces.taper.sample(rng),
         bevel_width=pieces.bevel_width.sample(rng),
         lathe_segments=pieces.lathe_segments.sample(rng),
-        white_color=_jitter_color(pieces.white_color, rng, 0.05),
-        black_color=_jitter_color(pieces.black_color, rng, 0.03),
+        white_color=white_color,
+        black_color=black_color,
         roughness=pieces.roughness.sample(rng),
+        material=material,
+        light_maps=light_maps,
+        dark_maps=dark_maps,
         placements=placements,
         captured=captured,
     )
@@ -489,12 +599,52 @@ def resolve_scene(config: GeneratorConfig, rng: random.Random) -> ResolvedScene:
                 )
             )
 
+    table_size = scene.table_size.sample(rng) * square_size
     return ResolvedScene(
-        table_size=scene.table_size.sample(rng) * square_size,
+        table_size=table_size,
         table_thickness=scene.table_thickness.sample(rng) * square_size,
         table_color=_jitter_color(rng.choice(scene.table_color), rng, 0.05),
         table_roughness=scene.table_roughness.sample(rng),
+        table_texture=choose_table_texture(scene, rng, table_size=table_size),
         distractors=distractors,
+    )
+
+
+def choose_table_texture(
+    scene: SceneConfig, rng: random.Random, *, table_size: float = 1.0
+) -> TableTexture | None:
+    """Pick a photographed tabletop for one scene, or None for the flat colour.
+
+    Resolved here rather than on the Blender side so the choice lands in the job
+    spec: a scene is then reproducible from its spec alone, even if the texture
+    directory later gains or loses files.
+
+    ``texture_scale`` is stated as repeats across the whole table and converted to
+    Blender's per-unit mapping scale here, because the tabletop is 20-45 squares
+    wide: left per-unit, a scale of 1 tiles the map thirty times and reads as fine
+    fabric rather than as a wooden tabletop.
+    """
+    if scene.texture_dir is None or rng.random() >= scene.texture_probability:
+        return None
+    available = texture_sets(scene.texture_dir)
+    if not available:
+        # A missing or empty directory is not an error: it is the no-assets path,
+        # and the flat colour still renders a valid scene.
+        return None
+
+    chosen = rng.choice(available)
+    tint = scene.texture_tint.sample(rng)
+    repeats = scene.texture_scale.sample(rng)
+    return TableTexture(
+        slug=chosen["slug"],
+        maps=chosen["maps"],
+        scale=repeats / max(table_size, 1e-6),
+        rotation_deg=scene.texture_rotation_deg.sample(rng),
+        tint=[tint, tint, tint],
+        roughness_shift=scene.texture_roughness_shift.sample(rng),
+        hue_shift=scene.texture_hue_shift.sample(rng),
+        saturation=scene.texture_saturation.sample(rng),
+        brightness=scene.texture_brightness.sample(rng),
     )
 
 
