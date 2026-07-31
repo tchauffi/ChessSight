@@ -2,6 +2,21 @@
 
 ChessSight is a computer vision project designed to identify and classify chess pieces on a chessboard using image processing techniques. This repository contains the code and resources needed to detect chess pieces in real-time, providing a foundation for applications in automated chess analysis and gameplay.
 
+## Detector v0.1.0
+
+An RT-DETR detector trained **entirely on synthetic renders** — it has never seen a
+real photograph during training. On the ChessReD test split of 306 real photographs it
+scores **mAP 0.636** (mAP@50 0.884). It emits boxes for the board and the pieces; it
+does not emit board corners, so there is no per-square position readout yet.
+
+See **[MODEL_CARD.md](MODEL_CARD.md)** for the full results, training recipe and — the
+part worth reading before you rely on it — the known limitations.
+
+```bash
+uv run chesssight train video <checkpoint> -i clip.mp4 -o annotated.mp4
+uv run chesssight train predict <checkpoint> --data <run> --out sheet.png
+```
+
 ## Synthetic dataset generator
 
 Training a model to read a position off a photograph needs far more labelled boards

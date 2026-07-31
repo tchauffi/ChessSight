@@ -190,3 +190,8 @@ assets/**/*.glb
 assets/**/*.gltf
 assets/**/*.fbx
 assets/**/*.dae
+
+# Annotated videos and other regenerable media outputs.
+*.mp4
+*.webm
+*.mov
