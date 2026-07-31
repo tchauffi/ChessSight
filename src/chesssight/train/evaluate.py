@@ -190,6 +190,35 @@ def _board_box(sample) -> list[float] | None:
     return list(box.xyxy) if box is not None else None
 
 
+def _sample_targets(sample, *, corners: bool) -> tuple[list[list[float]], list[int]]:
+    """Ground-truth boxes and labels for one sample, in detector indices."""
+    from chesssight.train.dataset import corner_annotations
+    from chesssight.train.labels import BOARD_INDEX, CORNER_INDEX
+
+    boxes: list[list[float]] = []
+    labels: list[int] = []
+    for piece in sample.pieces:
+        if piece.bbox is None:
+            continue
+        boxes.append(list(piece.bbox.xyxy))
+        labels.append(class_id_to_index(piece.class_id))
+
+    board = _board_box(sample)
+    if board is not None:
+        boxes.append(board)
+        labels.append(BOARD_INDEX)
+
+    # Corner truth only when the model was trained for it. Adding it for a model that
+    # never predicts corners would score a whole class at zero and drag the reported
+    # mAP down for a capability it was never asked to have.
+    if corners:
+        for record in corner_annotations(sample):
+            x, y, w, h = record["bbox"]
+            boxes.append([x, y, x + w, y + h])
+            labels.append(CORNER_INDEX)
+    return boxes, labels
+
+
 @torch.no_grad()
 def evaluate_samples(
     model,
@@ -199,6 +228,7 @@ def evaluate_samples(
     *,
     split: str = "test",
     on_board: bool = False,
+    corners: bool = False,
     limit: int | None = None,
     split_spec=None,
 ) -> dict[str, float]:
@@ -213,7 +243,7 @@ def evaluate_samples(
     from PIL import Image
 
     from chesssight.data.geometry import polygon_contains
-    from chesssight.train.labels import BOARD_INDEX
+    from chesssight.train.labels import BOARD_INDEX, CORNER_INDEX
 
     model.eval()
     metric = MeanAveragePrecision(box_format="xyxy", class_metrics=True)
@@ -246,7 +276,10 @@ def evaluate_samples(
             keep = [
                 index
                 for index in range(len(boxes))
-                if int(labels[index]) == BOARD_INDEX
+                # A corner sits *on* the board polygon's edge, so the foot test
+                # rejects it about half the time depending on which side of the
+                # boundary it rounds to. Exempt it like the board itself.
+                if int(labels[index]) in (BOARD_INDEX, CORNER_INDEX)
                 or polygon_contains(
                     sample.board.corners_px,
                     (
@@ -260,17 +293,7 @@ def evaluate_samples(
             scores = scores[selection]
             labels = labels[selection]
 
-        truth_boxes: list[list[float]] = []
-        truth_labels: list[int] = []
-        for piece in sample.pieces:
-            if piece.bbox is None:
-                continue
-            truth_boxes.append(list(piece.bbox.xyxy))
-            truth_labels.append(class_id_to_index(piece.class_id))
-        board = _board_box(sample)
-        if board is not None:
-            truth_boxes.append(board)
-            truth_labels.append(BOARD_INDEX)
+        truth_boxes, truth_labels = _sample_targets(sample, corners=corners)
 
         metric.update(
             [{"boxes": boxes, "scores": scores, "labels": labels}],

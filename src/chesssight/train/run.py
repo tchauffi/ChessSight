@@ -128,6 +128,7 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
                 resolved,
                 split=config.eval_split,
                 on_board=eval_on_board,
+                corners=config.corners,
                 split_spec=spec,
             )
             record.update(metrics)
