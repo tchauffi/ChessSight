@@ -28,12 +28,16 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
     torch.manual_seed(config.seed)
     resolved = resolve_device(device)
 
+    spec = SplitSpec(
+        val_fraction=config.val_fraction, test_fraction=config.test_fraction
+    )
     repeats = config.repeats or [1] * len(config.data_roots)
     for root, repeat in zip(config.data_roots, repeats, strict=True):
-        counts = describe_split(root, SplitSpec(config.val_fraction))
+        counts = describe_split(root, spec)
         suffix = f" x{repeat}" if repeat > 1 else ""
         print(
-            f"[chesssight] {counts['total']} samples from {root}{suffix}",
+            f"[chesssight] {counts['total']} samples from {root}{suffix} "
+            f"(train {counts['train']}, val {counts['val']}, test {counts['test']})",
             flush=True,
         )
     eval_root = config.data_roots[config.eval_dataset]
@@ -124,7 +128,7 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
                 resolved,
                 split=config.eval_split,
                 on_board=eval_on_board,
-                split_spec=SplitSpec(config.val_fraction),
+                split_spec=spec,
             )
             record.update(metrics)
             print(

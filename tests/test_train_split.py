@@ -1,4 +1,4 @@
-"""How a run is divided into train and validation.
+"""How a run is divided into train, validation and test.
 
 The rule is shared between the data loaders and the mAP evaluator. It has to be:
 when only the loaders knew it, evaluating a single-split dataset on ``val`` matched
@@ -43,13 +43,17 @@ class TestSingleSplitDataset:
         assert source == "hash"
         assert entries
 
-    def test_train_and_val_partition_the_dataset(self):
+    def test_the_three_splits_partition_the_dataset(self):
         everything = synthetic_run()
-        train, _ = select_entries(everything, split="train")
-        val, _ = select_entries(everything, split="val")
+        parts = {
+            name: {e.id for e in select_entries(everything, split=name)[0]}
+            for name in ("train", "val", "test")
+        }
 
-        assert not {e.id for e in train} & {e.id for e in val}
-        assert len(train) + len(val) == len(everything)
+        assert not parts["train"] & parts["val"]
+        assert not parts["train"] & parts["test"]
+        assert not parts["val"] & parts["test"]
+        assert sum(len(part) for part in parts.values()) == len(everything)
 
     def test_the_val_fraction_is_honoured(self):
         entries, _ = select_entries(
@@ -74,11 +78,37 @@ class TestSingleSplitDataset:
         # validation set.
         assert {e.id for e in small} < {e.id for e in large}
 
-    def test_there_is_no_hashed_test_set(self):
-        # Hashing out a third split would silently overlap val, so it is refused
-        # rather than quietly returning something plausible.
-        with pytest.raises(ValueError, match="no separate"):
-            select_entries(synthetic_run(), split="test")
+    def test_the_test_fraction_is_honoured(self):
+        entries, _ = select_entries(
+            synthetic_run(2000),
+            split="test",
+            spec=SplitSpec(val_fraction=0.1, test_fraction=0.15),
+        )
+        assert 0.13 < len(entries) / 2000 < 0.17
+
+    def test_adding_a_test_split_leaves_the_val_set_alone(self):
+        # Test is carved off *above* val, so a number measured before this split
+        # existed still refers to the same samples; what moves is training data.
+        everything = synthetic_run(2000)
+        without, _ = select_entries(
+            everything, split="val", spec=SplitSpec(val_fraction=0.1, test_fraction=0.0)
+        )
+        with_test, _ = select_entries(
+            everything, split="val", spec=SplitSpec(val_fraction=0.1, test_fraction=0.2)
+        )
+        assert [e.id for e in without] == [e.id for e in with_test]
+
+    def test_asking_for_a_test_set_that_was_not_reserved_is_refused(self):
+        # Silently returning the val set, or nothing at all, would both be read as
+        # a held-out number.
+        with pytest.raises(ValueError, match="no test set"):
+            select_entries(
+                synthetic_run(), split="test", spec=SplitSpec(test_fraction=0.0)
+            )
+
+    def test_a_spec_that_leaves_no_training_data_is_refused(self):
+        with pytest.raises(ValueError, match="no training data"):
+            SplitSpec(val_fraction=0.5, test_fraction=0.5)
 
 
 class TestStoredSplitDataset:

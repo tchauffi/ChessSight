@@ -531,6 +531,15 @@ def train_detr(
     image_size: Annotated[int, typer.Option("--image-size")] = 640,
     workers: Annotated[int, typer.Option("--workers", "-w")] = 4,
     val_fraction: Annotated[float, typer.Option("--val-fraction")] = 0.1,
+    test_fraction: Annotated[
+        float,
+        typer.Option(
+            "--test-fraction",
+            help="Held out of training and never scored during the run. The "
+            "validation split selects the checkpoint and fits the calibration, so "
+            "it is not an unbiased estimate by the end.",
+        ),
+    ] = 0.1,
     repeats: Annotated[
         str | None,
         typer.Option(
@@ -613,6 +622,7 @@ def train_detr(
         image_size=image_size,
         num_workers=workers,
         val_fraction=val_fraction,
+        test_fraction=test_fraction,
         limit=limit,
     )
     run_training(config, device=device)
@@ -625,9 +635,14 @@ def train_evaluate(
     split: Annotated[str, typer.Option("--split")] = "val",
     batch_size: Annotated[int, typer.Option("--batch-size", "-b")] = 8,
     val_fraction: Annotated[float, typer.Option("--val-fraction")] = 0.1,
+    test_fraction: Annotated[float, typer.Option("--test-fraction")] = 0.1,
     device: Annotated[str | None, typer.Option("--device")] = None,
 ) -> None:
-    """Report mAP for a saved checkpoint, overall and per class."""
+    """Report mAP for a saved checkpoint, overall and per class.
+
+    The fractions must match the ones the run was trained with, or the split this
+    scores is not the one that was held out.
+    """
     from torch.utils.data import DataLoader
 
     from chesssight.train.dataset import ChessDetectionDataset, SplitSpec, collate
@@ -640,7 +655,7 @@ def train_evaluate(
         Path(data),
         processor,
         split=split,
-        split_spec=SplitSpec(val_fraction=val_fraction),
+        split_spec=SplitSpec(val_fraction=val_fraction, test_fraction=test_fraction),
     )
     loader = DataLoader(
         dataset, batch_size=batch_size, collate_fn=collate, num_workers=2
@@ -764,7 +779,7 @@ def train_predict(
     from PIL import Image
 
     from chesssight.data.qa import contact_sheet
-    from chesssight.train.dataset import SplitSpec
+    from chesssight.train.dataset import SplitSpec, select_entries
     from chesssight.train.run import load_trained
     from chesssight.train.visualize import (
         draw_predictions,
@@ -775,23 +790,13 @@ def train_predict(
     )
 
     reader = DatasetReader(data)
-    all_entries = reader.entries()
-    stored_splits = {entry.split for entry in all_entries}
-
-    source = split_source
-    if source == "auto":
-        source = "stored" if len(stored_splits) > 1 else "hash"
-
-    if source == "stored":
-        entries = [e for e in all_entries if split == "all" or e.split == split]
-    else:
-        # Reproduce the training-time hold-out exactly, so what is drawn is data
-        # the model has genuinely not seen.
-        spec = SplitSpec()
-        wanted_val = split in ("val", "test")
-        entries = [
-            e for e in all_entries if split == "all" or spec.is_val(e.id) == wanted_val
-        ]
+    # Reproduce the training-time hold-out exactly, so what is drawn is data the
+    # model has genuinely not seen. Shared with the loaders and the evaluator
+    # rather than reimplemented here: the last copy of this rule drifted and drew
+    # validation images whenever `test` was asked for.
+    entries, source = select_entries(
+        reader.entries(), split=split, spec=SplitSpec(), split_source=split_source
+    )
 
     if not entries:
         typer.echo(f"no samples in split {split!r} using {source} splits")

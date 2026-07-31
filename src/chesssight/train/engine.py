@@ -50,6 +50,10 @@ class TrainConfig:
     grad_clip: float = 0.1
     num_workers: int = 4
     val_fraction: float = 0.1
+    #: Held out of training alongside the validation set and never scored during the
+    #: run. Validation both selects the checkpoint and fits the score calibration,
+    #: so it is no longer an unbiased estimate by the time the run ends.
+    test_fraction: float = 0.1
     image_size: int = 640
     amp: bool = True
     #: Train-time augmentation. Off by default so a run without it is the baseline
@@ -200,7 +204,9 @@ def cosine_schedule(optimizer, total_steps: int, warmup_fraction: float):
 
 
 def build_loaders(config: TrainConfig, processor) -> tuple[DataLoader, DataLoader]:
-    spec = SplitSpec(val_fraction=config.val_fraction)
+    spec = SplitSpec(
+        val_fraction=config.val_fraction, test_fraction=config.test_fraction
+    )
     repeats = config.repeats or [1] * len(config.data_roots)
 
     transform = None

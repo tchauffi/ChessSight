@@ -30,19 +30,53 @@ MIN_BOX_SIDE_PX = 2.0
 
 @dataclass(frozen=True)
 class SplitSpec:
-    """How a run is divided into train and validation."""
+    """How a run is divided into train, validation and test.
+
+    Three ways rather than two because ``val`` does double duty during a run: it
+    selects the checkpoint and it calibrates the scores. A number read off the same
+    samples that chose the weights is not an estimate of anything, so ``test`` is
+    held out and never looked at until the run is over.
+    """
 
     val_fraction: float = 0.1
+    test_fraction: float = 0.1
 
-    def is_val(self, sample_id: str) -> bool:
-        """Deterministic per-id split.
+    def __post_init__(self) -> None:
+        if self.val_fraction < 0 or self.test_fraction < 0:
+            raise ValueError("split fractions must not be negative")
+        if self.val_fraction + self.test_fraction >= 1.0:
+            raise ValueError(
+                f"val {self.val_fraction} + test {self.test_fraction} leaves no "
+                "training data"
+            )
+
+    def position(self, sample_id: str) -> float:
+        """Where an id falls in [0, 1).
 
         Hashing the id rather than slicing the index means the split survives the
         dataset being regenerated at a different size, and cannot accidentally put
         a whole correlated block of seeds on one side.
         """
         digest = hashlib.blake2b(sample_id.encode("utf-8"), digest_size=4).digest()
-        return int.from_bytes(digest, "big") / 2**32 < self.val_fraction
+        return int.from_bytes(digest, "big") / 2**32
+
+    def assign(self, sample_id: str) -> str:
+        """Which of train/val/test an id belongs to.
+
+        Validation is carved off the bottom of the range and test immediately above
+        it, so adding a test split leaves the *existing* validation set exactly as
+        it was -- numbers measured before this change stay comparable, and the test
+        set comes out of what used to be training data.
+        """
+        where = self.position(sample_id)
+        if where < self.val_fraction:
+            return "val"
+        if where < self.val_fraction + self.test_fraction:
+            return "test"
+        return "train"
+
+    def is_val(self, sample_id: str) -> bool:
+        return self.assign(sample_id) == "val"
 
 
 def select_entries(
@@ -58,7 +92,7 @@ def select_entries(
     -- images from one game share a board, a room and a camera -- so re-splitting it
     by hash would leak all three across the boundary and flatter every number
     measured against it. A synthetic run has no such structure and stores one split
-    for everything, so it gets hashed.
+    for everything, so it gets hashed into three.
 
     Shared by the loaders and the mAP evaluator on purpose. When only the loaders
     knew this rule, evaluating a single-split dataset on ``val`` matched no stored
@@ -75,15 +109,16 @@ def select_entries(
             entry for entry in all_entries if split == "all" or entry.split == split
         ]
     else:
-        if split == "test":
+        if split == "test" and spec.test_fraction == 0.0:
             raise ValueError(
-                "this dataset stores a single split, so there is no separate "
-                "test set to hash out; use 'val' or pass split_source='stored'"
+                "this dataset stores a single split and test_fraction is 0, so "
+                "there is no test set to hash out; use 'val', raise "
+                "test_fraction, or pass split_source='stored'"
             )
         entries = [
             entry
             for entry in all_entries
-            if split == "all" or spec.is_val(entry.id) == (split == "val")
+            if split == "all" or spec.assign(entry.id) == split
         ]
     return entries, split_source
 
@@ -233,12 +268,19 @@ def collate(batch: Sequence[dict]) -> dict:
 
 
 def describe_split(root: Path, spec: SplitSpec | None = None) -> dict[str, int]:
-    """Counts per split, for reporting before a run starts."""
+    """Counts per split, for reporting before a run starts.
+
+    Reports the *hash* split regardless of what the index stores, since that is the
+    division a synthetic run will actually be trained under. A dataset that carries
+    its own splits is read with ``select_entries`` instead.
+    """
     reader = DatasetReader(root)
     spec = spec or SplitSpec()
-    val = sum(1 for entry in reader.entries() if spec.is_val(entry.id))
-    total = len(reader.entries())
-    return {"total": total, "train": total - val, "val": val}
+    counts = {"total": 0, "train": 0, "val": 0, "test": 0}
+    for entry in reader.entries():
+        counts["total"] += 1
+        counts[spec.assign(entry.id)] += 1
+    return counts
 
 
 def annotates_off_board(root: Path, probe: int = 200) -> bool:
