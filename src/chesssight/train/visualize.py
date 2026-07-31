@@ -197,35 +197,33 @@ def square_accuracy(sample: Sample, predictions: list[dict]) -> dict[str, float]
     """How well the predictions reproduce the position, square by square.
 
     A detector's mAP is about boxes; what this project ultimately wants is the
-    position. Assigning each prediction to the square under its box's foot -- a
-    piece stands on its square -- turns one into the other, and shows whether good
-    boxes are actually producing a readable board.
+    position. Assigning each prediction to the square it stands on turns one into the
+    other, and shows whether good boxes are actually producing a readable board.
+
+    The assignment itself lives in :mod:`chesssight.train.position` and is shared with
+    the corner-driven pipeline rather than reimplemented here. When this function had
+    its own copy the two drifted: this one placed *corner* detections onto squares as
+    though they were pieces, and stood each piece on its box's bottom edge, which
+    reads a piece near a boundary one square over.
     """
     import numpy as np
 
     from chesssight.data.fen import BOARD_SIZE
+    from chesssight.data.geometry import board_to_image_homography
+    from chesssight.train.position import grid_from
 
-    centers = np.asarray([square.center_px for square in sample.squares])
-    # square index -> (label, score), keeping the most confident claim when two
-    # boxes land on the same square.
-    claimed: dict[int, tuple[int, float]] = {}
-
-    for prediction in predictions:
-        if prediction["label"] == BOARD_INDEX:
-            continue
-        x0, _, x1, y1 = prediction["box"]
-        foot = np.array([(x0 + x1) / 2.0, y1])
-        index = int(np.argmin(np.linalg.norm(centers - foot, axis=1)))
-        existing = claimed.get(index)
-        if existing is None or prediction["score"] > existing[1]:
-            claimed[index] = (prediction["label"], prediction["score"])
+    homography = board_to_image_homography(
+        np.asarray(sample.board.corners_px, dtype=np.float64)
+    )
+    grid = grid_from(predictions, homography)
 
     correct = 0
     occupied_correct = 0
     occupied_total = 0
     for index, square in enumerate(sample.squares):
+        rank, file = divmod(index, BOARD_SIZE)
         truth = class_id_to_index(square.occupant) if square.occupant else None
-        guess = claimed[index][0] if index in claimed else None
+        guess = class_id_to_index(grid[rank][file]) if grid[rank][file] else None
         if truth is not None:
             occupied_total += 1
             occupied_correct += guess == truth
