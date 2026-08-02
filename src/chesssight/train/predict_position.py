@@ -20,6 +20,9 @@ from typing import Any
 import torch
 
 from chesssight.data.fen import grid_to_fen
+from chesssight.train.position import POSITION_THRESHOLD
+
+__all__ = ["POSITION_THRESHOLD", "PositionReader", "load_reader"]
 
 
 @dataclass
@@ -34,6 +37,11 @@ class PositionReader:
     corner_model: Any
     corner_config: Any
     device: torch.device
+    #: Score a detection must reach to be considered for a square. Defaults to
+    #: :data:`POSITION_THRESHOLD`; pass ``None`` to fall back to the
+    #: calibration's own operating point, which is fitted for detection F1 --
+    #: a different objective, and a much stricter one.
+    threshold: float | None = POSITION_THRESHOLD
 
     @torch.no_grad()
     def read(self, image) -> dict:
@@ -60,7 +68,12 @@ class PositionReader:
         if quad is None:
             return {"corners": None, "grid": None, "fen": None, "detections": []}
 
-        threshold = self.calibration.threshold if self.calibration else 0.3
+        if self.threshold is not None:
+            threshold = self.threshold
+        elif self.calibration:
+            threshold = self.calibration.threshold
+        else:
+            threshold = 0.3
         detections = predict(
             self.detector,
             self.processor,
@@ -83,9 +96,17 @@ class PositionReader:
 
 
 def load_reader(
-    detector: Path, corners: Path, device: str | None = None
+    detector: Path,
+    corners: Path,
+    device: str | None = None,
+    threshold: float | None = POSITION_THRESHOLD,
 ) -> PositionReader:
-    """Load both checkpoints once; the reader is then cheap per image."""
+    """Load both checkpoints once; the reader is then cheap per image.
+
+    ``threshold`` defaults to :data:`POSITION_THRESHOLD`. Passing ``None``
+    restores the calibration's detection operating point, which reads boards
+    considerably worse.
+    """
     from chesssight.train.calibrate import Calibration
     from chesssight.train.heatmap import load as load_corners
     from chesssight.train.run import load_trained
@@ -99,4 +120,5 @@ def load_reader(
         corner_model=corner_model,
         corner_config=corner_config,
         device=resolved,
+        threshold=threshold,
     )

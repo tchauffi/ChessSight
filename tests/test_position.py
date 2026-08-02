@@ -143,3 +143,14 @@ class TestReadPosition:
             detections.append(detection_on(rank, file, class_id))
         grid = read_position(detections, CORNERS)
         assert grid == truth
+
+
+def test_position_threshold_is_below_a_detection_operating_point() -> None:
+    """Reading a board wants recall; detecting objects wants balance.
+
+    Pinned because the two thresholds are easy to conflate, and using the
+    detection one for board reading costs 37 points of board accuracy.
+    """
+    from chesssight.train.predict_position import POSITION_THRESHOLD
+
+    assert 0.0 < POSITION_THRESHOLD < 0.33

@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ChessSight &mdash; reading a chess position off a photograph</title>
+<meta name="description" content="Two models trained entirely on synthetic
+  Blender renders read a chess position off a real photograph. Measured on 306
+  held-out photographs: 97.06% of squares, 31.05% of boards exactly." />
+<link rel="canonical" href="https://tchauffi.github.io/ChessSight/" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="ChessSight" />
+<meta property="og:description" content="Reading a chess position off a
+  photograph, trained entirely on synthetic renders." />
+<meta property="og:url" content="https://tchauffi.github.io/ChessSight/" />
+<meta property="og:image"
+  content="https://tchauffi.github.io/ChessSight/assets/ex000010-found.jpg" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon"
+  href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#9822;</text></svg>" />
+<style>
+  /* ---- tokens -------------------------------------------------------- */
+  :root {
+    color-scheme: light;
+    --ground: #eceeea;
+    --surface: #fafbf8;
+    --sunken: #e3e6e0;
+    --ink: #151815;
+    --ink-soft: #3c433d;
+    --muted: #5b625c;
+    --rule: #cdd2c9;
+    --rule-soft: #dee2d9;
+    --accent: #8f6210;
+    --accent-mark: #b8791a;
+    --accent-wash: #f3e6cb;
+    --good: #2c7a52;
+    --bad: #bd3a44;
+    --box-white: #2b7fa8;
+    --box-black: #b03a76;
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+      "Liberation Mono", monospace;
+    --serif: Charter, "Bitstream Charter", "Iowan Old Style",
+      "Palatino Linotype", Palatino, Georgia, serif;
+
+    --measure: 34rem;
+    --wide: 68rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --ground: #0f1211;
+      --surface: #171a18;
+      --sunken: #1e2220;
+      --ink: #e6eae4;
+      --ink-soft: #c3cabf;
+      --muted: #949e97;
+      --rule: #2d332f;
+      --rule-soft: #232825;
+      --accent: #f0c05a;
+      --accent-mark: #e0af45;
+      --accent-wash: #2c2718;
+      --good: #57bd88;
+      --bad: #e0555f;
+      --box-white: #7dd3fc;
+      --box-black: #f472b6;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #0f1211;
+    --surface: #171a18;
+    --sunken: #1e2220;
+    --ink: #e6eae4;
+    --ink-soft: #c3cabf;
+    --muted: #949e97;
+    --rule: #2d332f;
+    --rule-soft: #232825;
+    --accent: #f0c05a;
+    --accent-mark: #e0af45;
+    --accent-wash: #2c2718;
+    --good: #57bd88;
+    --bad: #e0555f;
+    --box-white: #7dd3fc;
+    --box-black: #f472b6;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --ground: #eceeea;
+    --surface: #fafbf8;
+    --sunken: #e3e6e0;
+    --ink: #151815;
+    --ink-soft: #3c433d;
+    --muted: #5b625c;
+    --rule: #cdd2c9;
+    --rule-soft: #dee2d9;
+    --accent: #8f6210;
+    --accent-mark: #b8791a;
+    --accent-wash: #f3e6cb;
+    --good: #2c7a52;
+    --bad: #bd3a44;
+    --box-white: #2b7fa8;
+    --box-black: #b03a76;
+  }
+
+  /* ---- reset ---------------------------------------------------------
+     The host supplies only `body{margin:0}` and `img{max-width:100%}`, so
+     everything this layout assumes is stated here rather than inherited. */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  h1, h2, h3, p, ul, ol, figure, blockquote, pre, table {
+    margin: 0;
+    padding: 0;
+  }
+
+  ul, ol { list-style: none; }
+
+  /* ---- base ---------------------------------------------------------- */
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1.1rem, 4vw, 2.5rem) 5rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(3rem, 6vw, 5rem);
+  }
+
+  section { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  p { max-width: var(--measure); }
+
+  h1, h2, h3 { font-family: var(--mono); font-weight: 600; text-wrap: balance; }
+
+  h1 {
+    font-size: clamp(1.9rem, 5.2vw, 3.1rem);
+    line-height: 1.08;
+    letter-spacing: -0.035em;
+    margin: 0;
+  }
+
+  h2 {
+    font-size: clamp(1.15rem, 2.4vw, 1.4rem);
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+
+  h3 { font-size: 1.02rem; letter-spacing: -0.01em; margin: 0; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .rule { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+
+  /* ---- hero ---------------------------------------------------------- */
+  .hero { gap: 1.75rem; }
+  .hero .standfirst { font-size: 1.16rem; color: var(--ink-soft); max-width: 38rem; }
+
+  .hero-figure {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: clamp(0.75rem, 2.5vw, 1.75rem);
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: clamp(0.9rem, 2.5vw, 1.5rem);
+  }
+
+  .hero-figure img, .hero-figure .board { border-radius: 2px; }
+
+  .hero-arrow {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 1.4rem;
+    line-height: 1;
+  }
+
+  .hero-fen {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    word-break: break-all;
+    margin: 0;
+    max-width: none;
+  }
+
+  img { max-width: 100%; height: auto; display: block; }
+
+  .board svg { width: 100%; height: auto; display: block; }
+
+  /* ---- stats --------------------------------------------------------- */
+  /* Separators are drawn on the tiles, not by letting a darker container
+     show through a 1px gap: when the row wraps unevenly (4 tiles into 3
+     columns) that trick paints the leftover cells as a solid slab. */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .stat {
+    background: var(--surface);
+    box-shadow: inset 1px 0 0 var(--rule), inset 0 1px 0 var(--rule);
+    padding: 1.1rem 1.2rem 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .stat-value {
+    font-family: var(--mono);
+    font-size: clamp(1.5rem, 3.4vw, 1.95rem);
+    letter-spacing: -0.04em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    color: var(--ink);
+  }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .stat-note { font-size: 0.84rem; color: var(--muted); line-height: 1.45; }
+
+  /* ---- examples ------------------------------------------------------ */
+  .examples { gap: 2.5rem; }
+
+  .example {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: clamp(1rem, 2.5vw, 1.6rem);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .example-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem 1rem;
+  }
+
+  .example-blurb { color: var(--ink-soft); margin: 0; }
+
+  .verdict {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.28rem 0.55rem;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+
+  .verdict--good { color: var(--good); }
+  .verdict--near { color: var(--accent); }
+  .verdict--bad { color: var(--bad); }
+
+  .panels {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+
+  .panels--four { grid-template-columns: repeat(4, 1fr); }
+
+  @media (max-width: 860px) {
+    .panels, .panels--four { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (max-width: 520px) {
+    .panels, .panels--four { grid-template-columns: 1fr; }
+    .hero-figure { grid-template-columns: 1fr; }
+    .hero-arrow { transform: rotate(90deg); justify-self: center; }
+  }
+
+  .panel { margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .panel img, .panel .board {
+    border: 1px solid var(--rule-soft);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .panel figcaption {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    line-height: 1.4;
+    color: var(--muted);
+    display: flex;
+    gap: 0.45rem;
+  }
+
+  .panel .n {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wrong-list, .fen {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+    max-width: none;
+    overflow-wrap: anywhere;
+  }
+  .wrong-list code { color: var(--bad); }
+  .wrong-list code + code { margin-left: 0.15rem; }
+
+  .k {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-right: 0.35rem;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.1rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .legend li { display: flex; align-items: center; gap: 0.4rem; }
+
+  .swatch {
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 2px;
+    border: 2px solid currentColor;
+    flex: none;
+  }
+
+  .swatch--white { color: var(--box-white); }
+  .swatch--black { color: var(--box-black); }
+  .swatch--quad { color: var(--accent-mark); }
+  /* Matches the tint baked into the board diagrams, which carry one fixed
+     colour and so cannot follow the theme. */
+  .swatch--wrong { color: #d0464f; background: #d0464f; }
+
+
+  /* ---- try it -------------------------------------------------------- */
+  .try {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: clamp(1rem, 2.5vw, 1.6rem);
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: var(--ink);
+    background: var(--sunken);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.55rem 1.1rem;
+    cursor: pointer;
+    align-self: flex-start;
+  }
+
+  .btn:hover:not(:disabled) { border-color: var(--accent-mark); }
+  .btn:disabled { opacity: 0.55; cursor: default; }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .drop {
+    border: 1.5px dashed var(--rule);
+    border-radius: 3px;
+    padding: clamp(1.2rem, 4vw, 2.2rem);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.8rem;
+    text-align: center;
+  }
+
+  .drop.is-over { border-color: var(--accent-mark); background: var(--sunken); }
+  .drop p { color: var(--muted); font-size: 0.95rem; margin: 0; max-width: none; }
+  input[type="file"] { display: none; }
+
+  .status {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin: 0;
+    max-width: none;
+    min-height: 1.3rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .status[data-kind="ok"] { color: var(--good); }
+  .status[data-kind="error"], .status[data-kind="none"] { color: var(--bad); }
+
+  .spinner {
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 2px solid var(--rule);
+    border-top-color: var(--accent-mark);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex: none;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+  .try-result { display: flex; flex-direction: column; gap: 1rem; }
+  .try-result .panels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #try-overlay {
+    width: 100%;
+    height: auto;
+    display: block;
+    border: 1px solid var(--rule-soft);
+    border-radius: 2px;
+  }
+
+  .counts {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--muted);
+    margin: 0;
+    max-width: none;
+  }
+
+  /* ---- chart --------------------------------------------------------- */
+  .chart-wrap { overflow-x: auto; }
+
+  table.chart {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 22rem;
+    font-family: var(--mono);
+  }
+
+  .chart th, .chart td { padding: 0.34rem 0; vertical-align: middle; }
+
+  .chart th[scope="row"] {
+    text-align: left;
+    font-weight: 400;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    padding-right: 1rem;
+    width: 1%;
+  }
+
+  .bar-note {
+    display: block;
+    font-size: 0.66rem;
+    color: var(--muted);
+  }
+
+  .bar-cell { width: 100%; padding-right: 1.35rem; }
+
+  .bar-row:hover th[scope="row"], .bar-row:hover .bar-value { color: var(--ink); }
+  .bar-row:hover .bar { filter: saturate(1.15) brightness(1.06); }
+
+  .bar {
+    display: block;
+    height: 0.85rem;
+    width: calc(var(--w) * 100%);
+    min-width: 2px;
+    background: var(--accent-mark);
+    border-radius: 0 3px 3px 0;
+  }
+
+  .bar-row:first-child .bar { background: var(--good); }
+
+  /* Fixed columns for both figures, so the longest bar can never crowd its
+     own value the way an auto-width cell lets it. */
+  .bar-value {
+    text-align: right;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--ink);
+    width: 1%;
+  }
+
+  .bar-count { display: inline-block; min-width: 2.5ch; text-align: right; }
+
+  .bar-pct {
+    display: inline-block;
+    min-width: 3.5ch;
+    text-align: right;
+    color: var(--muted);
+    margin-left: 0.6rem;
+  }
+
+  .chart caption {
+    caption-side: top;
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 0.8rem;
+  }
+
+  /* ---- steps --------------------------------------------------------- */
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .steps li {
+    background: var(--surface);
+    box-shadow: inset 1px 0 0 var(--rule), inset 0 1px 0 var(--rule);
+    padding: 1.1rem 1.2rem 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .step-name { font-family: var(--mono); font-size: 0.82rem; color: var(--ink); }
+  .step-name .n { color: var(--accent); margin-right: 0.5rem; }
+  .steps p { font-size: 0.9rem; color: var(--muted); margin: 0; max-width: none; }
+
+  /* ---- synthetic strip ----------------------------------------------- */
+  .strip {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 2px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--rule);
+  }
+
+  @media (max-width: 760px) { .strip { grid-template-columns: repeat(3, 1fr); } }
+
+  .strip img { width: 100%; }
+
+  /* ---- limitations --------------------------------------------------- */
+  .limits { margin: 0; padding: 0; list-style: none; display: grid; gap: 1px;
+    background: var(--rule); border: 1px solid var(--rule); border-radius: 3px;
+    overflow: hidden; }
+
+  .limits li {
+    background: var(--surface);
+    padding: 0.95rem 1.2rem;
+    display: grid;
+    grid-template-columns: minmax(8rem, 11rem) 1fr;
+    gap: 0.35rem 1.4rem;
+    align-items: baseline;
+  }
+
+  @media (max-width: 620px) { .limits li { grid-template-columns: 1fr; } }
+
+  .limit-name {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .limits p { margin: 0; font-size: 0.92rem; color: var(--ink-soft); max-width: none; }
+
+  /* ---- run it -------------------------------------------------------- */
+  pre {
+    background: var(--sunken);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.65;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  pre .c { color: var(--muted); }
+
+  /* ---- footer -------------------------------------------------------- */
+  footer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--rule);
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  footer p { max-width: 42rem; margin: 0; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .bar { transition: width 0.4s ease; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="hero">
+    <p class="eyebrow">ChessSight &middot; {{N}} held-out photographs &middot;
+      <a href="https://github.com/tchauffi/ChessSight">GitHub</a></p>
+    <h1>Reading a chess position off a photograph</h1>
+    <p class="standfirst">
+      Two models, trained entirely on synthetic renders, that have never seen a
+      real photograph during training. Point them at one and they return the
+      position on the board.
+    </p>
+
+    <div class="hero-figure">
+      <img src="{{HERO_PHOTO}}" width="680" alt="A photograph of a chessboard on a table,
+        seen at an angle" />
+      <span class="hero-arrow" aria-hidden="true">&rarr;</span>
+      <div class="board" role="img" aria-label="The chess position the model
+        read from the photograph, all 64 squares correct">{{HERO_BOARD}}</div>
+    </div>
+    <p class="hero-fen"><span class="k">FEN</span>{{HERO_FEN}}</p>
+  </header>
+
+  <section>
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-value">{{PCT_SQUARES}}</span>
+        <span class="stat-label">of squares</span>
+        <span class="stat-note">Read correctly across all
+          {{N}} photographs &mdash; {{N_SQUARES}} squares in total.</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{PCT_EXACT}}</span>
+        <span class="stat-label">boards exact</span>
+        <span class="stat-note">Every one of the 64 squares right, with no
+          allowance for a single slip.</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{LOCATED}}</span>
+        <span class="stat-label">boards located</span>
+        <span class="stat-note">The corner model found four corners on every
+          photograph, to 0.13 squares.</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">0.643</span>
+        <span class="stat-label">detector mAP</span>
+        <span class="stat-note">Zero-shot on real photographs; 0.888 at
+          mAP@50, 0.942 on the board itself.</span>
+      </div>
+    </div>
+    <p>
+      Every number on this page comes from one run of the pipeline over
+      ChessReD's held-out test split &mdash; {{N}} photographs that were
+      not used for training, checkpoint selection or calibration. The examples
+      below were picked from that same run, failures included.
+    </p>
+  </section>
+
+  <hr class="rule" />
+
+  <section class="examples">
+    <h2>Four photographs, start to finish</h2>
+    <ul class="legend">
+      <li><span class="swatch swatch--quad" aria-hidden="true"></span>
+        predicted board outline</li>
+      <li><span class="swatch swatch--white" aria-hidden="true"></span>
+        predicted white piece</li>
+      <li><span class="swatch swatch--black" aria-hidden="true"></span>
+        predicted black piece</li>
+      <li><span class="swatch swatch--wrong" aria-hidden="true"></span>
+        square read wrongly</li>
+    </ul>
+    {{EXAMPLES}}
+  </section>
+
+
+  <hr class="rule" />
+
+  <section id="try">
+    <h2>Try it on your own photograph</h2>
+    <p>
+      The same two models, running in this tab. Nothing is uploaded &mdash;
+      the weights come to you and the photograph never leaves the browser.
+    </p>
+    <p>
+      They are quantised to 8 bits to make that possible, which costs
+      accuracy: <strong>61.4% of boards exactly right</strong> here against
+      68.3% for the full-precision pipeline, on the same 306 photographs.
+      Expect a wrong piece more often than the numbers above suggest.
+    </p>
+
+    <div class="try">
+      <button class="btn" type="button" id="try-load">
+        Load the models &middot; 76 MB
+      </button>
+      <p class="status" id="try-status" data-kind="idle"></p>
+
+      <div class="drop" id="try-drop" hidden>
+        <p>Drop a photograph of a chessboard here</p>
+        <button class="btn" type="button" id="try-pick">Choose a file</button>
+        <input type="file" id="try-file" accept="image/*" />
+      </div>
+
+      <div class="try-result" id="try-result" hidden>
+        <div class="panels">
+          <figure class="panel">
+            <canvas id="try-overlay"></canvas>
+            <figcaption><span class="n">1</span>what the two models found</figcaption>
+          </figure>
+          <figure class="panel">
+            <div class="board" id="try-board"></div>
+            <figcaption><span class="n">2</span>the position that came out</figcaption>
+          </figure>
+        </div>
+        <p class="fen"><span class="k">FEN</span> <code id="try-fen"></code></p>
+        <p class="counts" id="try-counts"></p>
+      </div>
+    </div>
+  </section>
+  <hr class="rule" />
+
+  <section>
+    <h2>What &ldquo;{{PCT_EXACT}} exact&rdquo; actually looks like</h2>
+    <p>
+      A board counts as exact only if all 64 squares are right, so one missed
+      pawn fails the whole photograph. That makes it a harsh headline for a
+      pipeline that is usually one square away from perfect: {{PCT_WITHIN_ONE}}
+      of photographs come back with at most a single square wrong, and
+      {{PCT_WITHIN_THREE}} with at most three.
+    </p>
+    <div class="chart-wrap">
+      <table class="chart">
+        <caption>Squares read wrongly, per photograph &middot; n =
+          {{N}}</caption>
+        <tbody>
+          {{HISTOGRAM}}
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The errors are lopsided in a useful way. Of the squares that hold a piece,
+      {{PCT_OCCUPIED}} are named correctly, and of the {{WRONG_TOTAL}} squares
+      the pipeline gets wrong across the whole split, {{PCT_MISNAMED}} are a
+      piece it found and then named wrongly &mdash; against {{PCT_MISSED}} it
+      failed to see at all. Just {{N_SPURIOUS}} squares out of {{N_SQUARES}}
+      are empty ones it wrongly filled in. When it is wrong now, it is usually
+      confused rather than blind, and the confusion is specific: a queen called
+      a king accounts for a sixth of every wrong square on the board.
+    </p>
+  </section>
+
+  <hr class="rule" />
+
+  <section>
+    <h2>How a photograph becomes a position</h2>
+    <ol class="steps">
+      <li>
+        <span class="step-name"><span class="n">1</span>Find the pieces</span>
+        <p>
+          An RT-DETR detector emits a box and a class for the board and for
+          every piece on it &mdash; six types in two colours. It says what is in
+          the picture, not where on the board it stands.
+        </p>
+      </li>
+      <li>
+        <span class="step-name"><span class="n">2</span>Find the board</span>
+        <p>
+          A Swin-T heatmap model regresses the four board corners. Four corners
+          give a homography, and a homography turns the photograph's
+          perspective into a plain 8&times;8 grid.
+        </p>
+      </li>
+      <li>
+        <span class="step-name"><span class="n">3</span>Assign and orient</span>
+        <p>
+          Each piece is placed on the square its base stands on. Square colour
+          parity and where the pieces sit then decide which corner is a8 &mdash;
+          the step that fails in the fourth example above.
+        </p>
+      </li>
+    </ol>
+    <p>
+      The two models are trained separately and never see each other's output
+      during training. The numbers on this page are end to end: the detector
+      works from the photograph and the corner model's own predicted geometry,
+      not from annotated corners.
+    </p>
+  </section>
+
+  <hr class="rule" />
+
+  <section>
+    <h2>None of the training images were real</h2>
+    <p>
+      Teaching a model to read a board needs far more labelled positions than
+      anyone wants to annotate by hand, so ChessSight renders them in Blender
+      instead &mdash; 20&thinsp;000 of them, with labels that come out exact and
+      free. Randomised piece sets, materials, lighting, camera angles and
+      clutter; positions drawn from real Lichess games and from uniform random
+      placement, so the model cannot lean on chess priors instead of reading
+      pixels.
+    </p>
+    <div class="strip">
+      {{SYNTH}}
+    </div>
+    <p>
+      These are training images, not results. Everything measured above is the
+      gap between them and a real photograph, crossed without a single real
+      training example.
+    </p>
+  </section>
+
+  <hr class="rule" />
+
+  <section>
+    <h2>Where it breaks</h2>
+    <ul class="limits">
+      <li>
+        <span class="limit-name">Small pieces</span>
+        <p>
+          mAP 0.44 on small objects against 0.94 on the board. Distant
+          boards and low, grazing camera angles degrade badly. Reading a
+          position tolerates this better than the detection score suggests,
+          because a square only needs its piece found once.
+        </p>
+      </li>
+      <li>
+        <span class="limit-name">Orientation</span>
+        <p>
+          Deciding which corner is a8 is a discrete choice, and when it goes
+          wrong the whole position is wrong at once &mdash; a perfectly read
+          board can score 48 of 64 purely because it was read from the wrong
+          end. Sparse endgames give it the least to work with, and are exactly
+          where it fails.
+        </p>
+      </li>
+      <li>
+        <span class="limit-name">Off-domain footage</span>
+        <p>
+          Confidences are calibrated on ChessReD-like photographs and mean
+          progressively less as footage diverges. On small, blurred or
+          near-edge-on boards the detector's scores saturate on people and
+          background.
+        </p>
+      </li>
+      <li>
+        <span class="limit-name">Tall pieces</span>
+        <p>
+          Queen for king is the most common single error, with rook for knight
+          behind it. Both are pairs that differ mainly in the shape of a
+          silhouette a few dozen pixels tall, and a crowded back rank hides
+          most of that difference.
+        </p>
+      </li>
+      <li>
+        <span class="limit-name">One seed</span>
+        <p>
+          Every figure here comes from a single training run per model.
+          Differences smaller than about 0.02 mAP are not distinguishable from
+          run-to-run noise.
+        </p>
+      </li>
+      <li>
+        <span class="limit-name">Not for officiating</span>
+        <p>
+          Intended for analysis and research on chess imagery. Not validated for
+          officiating, rating, or any setting where a misread board carries a
+          cost.
+        </p>
+      </li>
+    </ul>
+  </section>
+
+  <hr class="rule" />
+
+  <section>
+    <h2>Running it</h2>
+    <pre><span class="c"># one photograph in, one FEN per line out</span>
+uv run chesssight predict photo.jpg \
+  --detector runs/rtdetr_corners/best \
+  --corners  runs/corner_swin_v2/best \
+  --diagram  position.svg
+
+<span class="c"># the same pipeline with a browser in front of it</span>
+uv run chesssight demo \
+  --detector runs/rtdetr_corners/best \
+  --corners  runs/corner_swin_v2/best
+
+<span class="c"># render training data of your own</span>
+uv run chesssight synth run -c configs/default.yaml -n 20000 -w 2</pre>
+    <p>
+      &ldquo;No board found&rdquo; prints as exactly that rather than a guess.
+      The training recipe, the per-class scores and the rest of the known
+      limitations are in the
+      <a href="https://github.com/tchauffi/ChessSight/blob/main/MODEL_CARD.md">model
+      card</a>.
+    </p>
+  </section>
+
+  <footer>
+    <p>
+      Photographs from the <strong>Chess Recognition Dataset
+      (ChessReD)</strong>, Masouris &amp; van Gemert, VISAPP 2024, distributed
+      under CC&nbsp;BY-NC-SA&nbsp;4.0 and used here unmodified except for the
+      predicted geometry drawn over them.
+      <a href="https://doi.org/10.4121/99b5c721-280b-450b-b058-b2900b69a90f">
+        doi:10.4121/99b5c721-280b-450b-b058-b2900b69a90f</a>
+    </p>
+    <p>
+      Those photographs, and the versions of them on this page with predicted
+      geometry drawn over, are therefore <strong>CC BY-NC-SA 4.0</strong> and
+      not covered by this repository&rsquo;s MIT licence. They live under
+      <code>docs/assets/</code> with
+      <a href="https://github.com/tchauffi/ChessSight/blob/main/docs/assets/ATTRIBUTION.md">their
+      own licence note</a>.
+    </p>
+    <p>
+      Synthetic renders generated with Blender from CC0 assets (Poly Haven HDRIs
+      and textures) and public Lichess game dumps. Board diagrams drawn with
+      python-chess. Everything else on this page is MIT, like the rest of the
+      <a href="https://github.com/tchauffi/ChessSight">repository</a>.
+    </p>
+  </footer>
+
+{{PIECE_DEFS}}
+</div>
+
+<script src="vendor/ort.min.js"></script>
+<script type="module" src="demo/app.js"></script>
+</body>
+</html>

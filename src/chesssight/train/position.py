@@ -46,6 +46,22 @@ def foot(box: list[float]) -> tuple[float, float]:
     return x0 + (x1 - x0) * FOOT_X, y0 + (y1 - y0) * FOOT_Y
 
 
+#: Operating point for reading a board, as opposed to detecting objects.
+#:
+#: A detector checkpoint ships a threshold fitted for detection F1, which
+#: balances precision against recall. Reading a position does not want that
+#: balance: :func:`grid_from` keeps only the best-scoring detection per square
+#: and discards anything outside the board, so a spare low-scoring candidate is
+#: usually harmless while a missing one always costs a square. Recall is worth
+#: far more than precision here.
+#:
+#: Chosen by sweeping ChessReD **val** and measured on **test**, where against
+#: the calibration's own 0.331 it moves per-square 97.06% -> 99.25% and
+#: boards-exact 31.05% -> 68.30%. It lives in this module rather than beside
+#: the reader so that naming it costs no torch import.
+POSITION_THRESHOLD = 0.10
+
+
 def grid_from(detections: list[dict], homography: np.ndarray) -> list[list[int]]:
     """Assign each detected piece to a square, best score winning ties.
 
