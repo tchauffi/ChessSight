@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -14,6 +14,7 @@ from chesssight.data.geometry import is_mirrored
 from chesssight.data.qa import contact_sheet, render_overlay
 from chesssight.synth import runner
 from chesssight.synth.config import GeneratorConfig
+from chesssight.train.position import POSITION_THRESHOLD
 
 app = typer.Typer(
     help="Synthetic chess-board dataset generation.", no_args_is_help=True
@@ -103,6 +104,15 @@ def predict(
         ),
     ] = None,
     device: Annotated[str | None, typer.Option("--device")] = None,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            help="Detection score floor. The default reads boards; the "
+            "checkpoint's own calibration point is stricter and reads them "
+            "worse (see the README).",
+        ),
+    ] = POSITION_THRESHOLD,
 ) -> None:
     """Read the position off each photograph: one FEN per line.
 
@@ -115,7 +125,7 @@ def predict(
 
     from chesssight.train.predict_position import load_reader
 
-    reader = load_reader(detector, corners, device)
+    reader = load_reader(detector, corners, device, threshold)
     many = len(images) > 1
     if diagram and many:
         diagram.mkdir(parents=True, exist_ok=True)
@@ -127,14 +137,210 @@ def predict(
             continue
         typer.echo(f"{path}: {result['fen']}")
         if diagram:
-            import chess
-            import chess.svg
+            from chesssight.demo.render import board_svg
 
             target = diagram / f"{path.stem}.svg" if many else diagram
-            target.write_text(
-                chess.svg.board(chess.Board(result["fen"]), size=360),
-                encoding="utf-8",
+            target.write_text(board_svg(result["fen"]), encoding="utf-8")
+
+
+onnx_app = typer.Typer(
+    help="Export and run the pipeline without torch.", no_args_is_help=True
+)
+app.add_typer(onnx_app, name="onnx")
+
+
+@onnx_app.command("export")
+def onnx_export(
+    detector: Annotated[
+        Path, typer.Option("--detector", help="RT-DETR checkpoint directory.")
+    ],
+    corners: Annotated[
+        Path, typer.Option("--corners", help="Corner heatmap checkpoint directory.")
+    ],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Bundle directory.")],
+) -> None:
+    """Write both models to ONNX, with the metadata needed to run them."""
+    from chesssight.inference.onnx import export
+
+    export(detector, corners, out)
+    for file in sorted(out.iterdir()):
+        typer.echo(f"  {file.name:16} {file.stat().st_size / 1e6:8.1f} MB")
+
+
+@onnx_app.command("parity")
+def onnx_parity(
+    bundle: Annotated[Path, typer.Argument(help="Exported ONNX bundle.")],
+    detector: Annotated[
+        Path, typer.Option("--detector", help="RT-DETR checkpoint directory.")
+    ],
+    corners: Annotated[
+        Path, typer.Option("--corners", help="Corner heatmap checkpoint directory.")
+    ],
+    data: Annotated[Path, typer.Option("--data", help="Dataset root.")],
+    split: Annotated[str, typer.Option("--split")] = "test",
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-n", help="Stop after this many.")
+    ] = None,
+    tolerance: Annotated[
+        float, typer.Option("--tolerance", help="Allowed max abs tensor difference.")
+    ] = 5e-3,
+    min_agreement: Annotated[
+        float, typer.Option("--min-agreement", help="Required fraction of equal FENs.")
+    ] = 0.9,
+) -> None:
+    """Check the ONNX backend against the torch one, at two levels.
+
+    The ONNX path reimplements the pre- and post-processing that the torch path
+    gets from torchvision and transformers. A second copy of a rule is exactly
+    what has drifted silently in this repository before, so it is checked.
+
+    **Tensors** are the real guard: a wrong normalisation, label order or box
+    format moves the model outputs by far more than `--tolerance`, and that
+    fails loudly.
+
+    **FENs** are reported but only loosely bounded. They cannot be expected to
+    match exactly: the operating threshold sits in a dense part of the score
+    distribution, and a detection within a thousandth of it flips on
+    floating-point noise alone. A low agreement rate means something real is
+    wrong; a handful of one-square differences does not.
+    """
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    from chesssight.data.dataset import DatasetReader
+    from chesssight.inference.onnx import (
+        corner_input,
+        detector_input,
+    )
+    from chesssight.inference.onnx import (
+        load_reader as load_onnx,
+    )
+    from chesssight.train.predict_position import load_reader as load_torch
+
+    reader = DatasetReader(data)
+    entries = reader.entries(split)[: limit or None]
+    torch_pipeline = load_torch(detector, corners, "cpu")
+    onnx_pipeline = load_onnx(bundle)
+    meta = onnx_pipeline.meta
+
+    worst = {"logits": 0.0, "boxes": 0.0, "heatmap": 0.0}
+    agree = 0
+    differing: list[str] = []
+
+    for index, entry in enumerate(entries, 1):
+        sample = reader.load(entry.id)
+        image = Image.open(reader.image_path(sample)).convert("RGB")
+
+        # Tensor level: the same pixels through both graphs.
+        with torch.no_grad():
+            reference = torch_pipeline.detector(
+                pixel_values=torch.from_numpy(
+                    detector_input(image, meta["detector_size"], meta["rescale"])
+                )
             )
+            reference_heat = torch_pipeline.corner_model(
+                torch.from_numpy(corner_input(image, meta["corner_size"]))
+            )
+        got_logits, got_boxes = onnx_pipeline.detector.run(
+            ["logits", "pred_boxes"],
+            {
+                "pixel_values": detector_input(
+                    image, meta["detector_size"], meta["rescale"]
+                )
+            },
+        )
+        got_heat = onnx_pipeline.corners.run(
+            ["heatmap"], {"image": corner_input(image, meta["corner_size"])}
+        )[0]
+
+        # The detector selects 300 queries out of 8400 proposals, so two
+        # near-tied proposals can come back in a different order for a
+        # difference of 1e-5 in their scores. Comparing element by element
+        # then reports a huge difference for two rows that were merely
+        # swapped. Sorting first asks the question actually meant: are these
+        # the same numbers? The heatmap is dense with no selection in it, so
+        # it is compared where it lies.
+        for name, ref, got in (
+            ("logits", reference.logits, got_logits),
+            ("boxes", reference.pred_boxes, got_boxes),
+        ):
+            a = np.sort(ref.numpy().reshape(-1))
+            b = np.sort(np.asarray(got).reshape(-1))
+            worst[name] = max(worst[name], float(np.abs(a - b).max()))
+        worst["heatmap"] = max(
+            worst["heatmap"],
+            float(np.abs(reference_heat.numpy() - got_heat).max()),
+        )
+
+        expected = torch_pipeline.read(image)["fen"]
+        actual = onnx_pipeline.read(image)["fen"]
+        if expected == actual:
+            agree += 1
+        else:
+            differing.append(entry.id)
+        if index % 25 == 0:
+            typer.echo(f"  {index}/{len(entries)}")
+
+    total = len(entries)
+    typer.echo("max abs difference vs torch:")
+    for name, value in worst.items():
+        flag = "ok" if value <= tolerance else "FAIL"
+        typer.echo(f"  {name:8} {value:.3e}  {flag}")
+    typer.echo(f"identical FENs: {agree}/{total} ({agree / total:.1%})")
+    if differing:
+        typer.echo(f"  differing: {', '.join(differing[:10])}")
+
+    failed = any(v > tolerance for v in worst.values()) or agree / total < min_agreement
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def demo(
+    detector: Annotated[
+        Path | None, typer.Option("--detector", help="RT-DETR checkpoint directory.")
+    ] = None,
+    corners: Annotated[
+        Path | None,
+        typer.Option("--corners", help="Corner heatmap checkpoint directory."),
+    ] = None,
+    host: Annotated[str, typer.Option("--host", help="Address to bind.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 7860,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+    onnx: Annotated[
+        Path | None,
+        typer.Option("--onnx", help="Serve an exported ONNX bundle instead."),
+    ] = None,
+    threshold: Annotated[
+        float,
+        typer.Option("--threshold", help="Detection score floor (see `predict`)."),
+    ] = POSITION_THRESHOLD,
+) -> None:
+    """Serve a page that reads the position off a photograph you drop on it.
+
+    The same pipeline as `predict`, with a browser in front of it. Binds to
+    localhost by default: the models and the photographs stay on this machine,
+    and making it reachable from elsewhere should be a deliberate act.
+
+    With `--onnx` the checkpoints are not needed and neither is torch.
+    """
+    from chesssight.demo.server import serve
+
+    if onnx is not None:
+        from chesssight.inference.onnx import load_reader as load_onnx
+
+        reader: Any = load_onnx(onnx, threshold=threshold)
+        typer.echo(f"  onnx bundle {onnx}")
+    else:
+        if detector is None or corners is None:
+            typer.echo("pass --detector and --corners, or --onnx <bundle>.")
+            raise typer.Exit(1)
+        from chesssight.train.predict_position import load_reader
+
+        reader = load_reader(detector, corners, device, threshold)
+        typer.echo(f"  models loaded on {reader.device}")
+    serve(reader, host=host, port=port)
 
 
 @synth_app.command("plan")

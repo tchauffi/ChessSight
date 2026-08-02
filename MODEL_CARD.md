@@ -15,11 +15,44 @@ held-out test measurement.
 ## What it does and does not do
 
 It emits **boxes**: where the board is, where each piece is, and what type each piece
-is. It does **not** emit board corners, so there is no homography and therefore **no
-per-square position readout and no FEN** from a real image. Reconstructing a position
-needs corner regression, which this release does not have. The synthetic dataset
-already carries corner labels, so this is a training target that exists, not a missing
-capability of the data.
+is. On its own it does not emit board corners, so a position readout needs a second
+model — `corner_swin_v2` — and the pair together do produce a FEN. See
+[Reading a position](#reading-a-position-two-operating-points) below and the README.
+
+## Reading a position: two operating points
+
+The threshold in `calibration.json` is fitted to maximise **detection F1**. Reading a
+board is a different objective, and the same checkpoint scores very differently under
+each:
+
+| operating point | per-square | boards exact |
+|---|---|---|
+| `calibration.threshold` = 0.331 (detection F1) | 97.06% | 31.05% |
+| `POSITION_THRESHOLD` = 0.10 (board reading) | **99.25%** | **68.30%** |
+
+Why the gap is so large: `grid_from` keeps only the best-scoring detection per square
+and the homography discards anything off the board, so an extra low-scoring candidate
+is usually harmless while a missing one always costs a square. Recall is worth far
+more than precision here. The effect compounds — a sparsely populated grid also makes
+the "which corner is a8" decision unreliable, and a rotated board is wrong everywhere
+at once.
+
+0.10 was chosen by sweeping ChessReD **val** and is reported on **test**, so the figure
+is held out rather than tuned. It is the default for position reading in both the torch
+and the ONNX backends; `--threshold` overrides it.
+
+**The error profile changes shape with it.** At 0.331, 79% of wrong squares were pieces
+never detected. At 0.10 the total falls from 576 to 147 and misnaming dominates:
+
+| | missed | spurious | misnamed | total |
+|---|---|---|---|---|
+| 0.331 | 456 | 51 | 69 | 576 |
+| 0.10 | 33 | 38 | 76 | 147 |
+
+The dominant confusions are `white_queen` → `white_king` (25 squares), `black_rook` →
+`black_knight` (13) and `white_king` → `white_queen` (9): pairs that differ mainly in a
+silhouette a few dozen pixels tall. That, and orientation on sparse endgames, is where
+the remaining error now lives.
 
 ## Results
 
@@ -109,7 +142,10 @@ uv run chesssight train detr ~/datasets/chesssight/train5 -o ~/runs/rtdetr_synth
 
 ## Known limitations
 
-- **No position readout.** Boxes only; see above.
+- **Naming, not finding.** With the board-reading operating point the pipeline sees
+  almost every piece (98.3% of occupied squares named correctly) and its remaining
+  errors are mostly wrong *names* — a queen read as a king above all. Piece identity
+  on a crowded back rank is the open problem, not detection.
 - **Small pieces.** mAP 0.47 on small objects against 0.92 on large. Distant boards
   and low camera angles degrade badly.
 - **Out-of-domain footage.** On small, blurred, near-edge-on boards the piece scores

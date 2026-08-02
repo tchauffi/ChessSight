@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ChessSight — read a position off a photograph</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground: #eceeea;
+    --surface: #fafbf8;
+    --sunken: #e3e6e0;
+    --ink: #151815;
+    --ink-soft: #3c433d;
+    --muted: #5b625c;
+    --rule: #cdd2c9;
+    --accent: #8f6210;
+    --accent-mark: #b8791a;
+    --good: #2c7a52;
+    --bad: #bd3a44;
+    --box-white: #2b7fa8;
+    --box-black: #b03a76;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+      "Liberation Mono", monospace;
+    --serif: Charter, "Bitstream Charter", "Iowan Old Style",
+      "Palatino Linotype", Palatino, Georgia, serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0f1211;
+      --surface: #171a18;
+      --sunken: #1e2220;
+      --ink: #e6eae4;
+      --ink-soft: #c3cabf;
+      --muted: #949e97;
+      --rule: #2d332f;
+      --accent: #f0c05a;
+      --accent-mark: #e0af45;
+      --good: #57bd88;
+      --bad: #e0555f;
+      --box-white: #7dd3fc;
+      --box-black: #f472b6;
+    }
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, p, figure, ul, li { margin: 0; padding: 0; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 64rem;
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 3rem) clamp(1.1rem, 4vw, 2.5rem) 4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+  }
+
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(1.35rem, 3.4vw, 1.9rem);
+    letter-spacing: -0.03em;
+    font-weight: 600;
+    text-wrap: balance;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .lede { color: var(--ink-soft); max-width: 38rem; }
+
+  /* ---- drop zone ----------------------------------------------------- */
+  .drop {
+    border: 1.5px dashed var(--rule);
+    border-radius: 4px;
+    background: var(--surface);
+    padding: clamp(1.5rem, 5vw, 3rem);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.9rem;
+    text-align: center;
+    transition: border-color 0.15s, background 0.15s;
+  }
+
+  .drop.is-over { border-color: var(--accent-mark); background: var(--sunken); }
+  .drop.is-busy { opacity: 0.6; pointer-events: none; }
+
+  .drop p { color: var(--muted); font-size: 0.95rem; }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+    background: var(--sunken);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+
+  .btn:hover { border-color: var(--accent-mark); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  input[type="file"] { display: none; }
+
+  /* ---- status -------------------------------------------------------- */
+  .status {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+    min-height: 1.4rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .status[data-kind="error"] { color: var(--bad); }
+  .status[data-kind="none"] { color: var(--bad); }
+  .status[data-kind="ok"] { color: var(--good); }
+
+  .spinner {
+    width: 0.8rem;
+    height: 0.8rem;
+    border: 2px solid var(--rule);
+    border-top-color: var(--accent-mark);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+
+  /* ---- result -------------------------------------------------------- */
+  .result { display: none; flex-direction: column; gap: 1.25rem; }
+  .result.is-shown { display: flex; }
+
+  .panels {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+  }
+
+  @media (max-width: 720px) { .panels { grid-template-columns: 1fr; } }
+
+  figure {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  figure img, figure .board { border-radius: 2px; overflow: hidden; }
+  img { max-width: 100%; height: auto; display: block; }
+  .board svg { width: 100%; height: auto; display: block; }
+
+  figcaption {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--muted);
+  }
+
+  .fen-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.7rem 0.9rem;
+  }
+
+  .fen-label {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .fen-value {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+    flex: 1 1 16rem;
+  }
+
+  .counts {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.2rem;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.1rem;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--muted);
+    list-style: none;
+  }
+
+  .legend li { display: flex; align-items: center; gap: 0.4rem; }
+
+  .swatch {
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 2px;
+    border: 2px solid currentColor;
+  }
+
+  .swatch--quad { color: var(--accent-mark); }
+  .swatch--white { color: var(--box-white); }
+  .swatch--black { color: var(--box-black); }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.1rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <p class="eyebrow">ChessSight</p>
+    <h1>Read a position off a photograph</h1>
+  </header>
+
+  <p class="lede">
+    Drop in a photograph of a chessboard. The detector finds the pieces, the
+    corner model finds the board, and the two together give a position. Nothing
+    leaves this machine.
+  </p>
+
+  <div class="drop" id="drop">
+    <p>Drop a photograph here, or paste one</p>
+    <button class="btn" type="button" id="pick">Choose a file</button>
+    <input type="file" id="file" accept="image/*" />
+  </div>
+
+  <p class="status" id="status" data-kind="idle"></p>
+
+  <div class="result" id="result">
+    <div class="panels">
+      <figure>
+        <img id="overlay" alt="The photograph with the predicted board outline
+          and piece boxes drawn on it" />
+        <figcaption>what the two models found</figcaption>
+      </figure>
+      <figure>
+        <div class="board" id="board"></div>
+        <figcaption>the position that came out</figcaption>
+      </figure>
+    </div>
+
+    <ul class="legend">
+      <li><span class="swatch swatch--quad"></span>board outline</li>
+      <li><span class="swatch swatch--white"></span>white piece</li>
+      <li><span class="swatch swatch--black"></span>black piece</li>
+    </ul>
+
+    <div class="fen-row">
+      <span class="fen-label">FEN</span>
+      <span class="fen-value" id="fen"></span>
+      <button class="btn" type="button" id="copy">Copy</button>
+    </div>
+
+    <p class="counts" id="counts"></p>
+  </div>
+
+  <footer>
+    <p>
+      Trained entirely on synthetic Blender renders. On ChessReD&rsquo;s
+      held-out test split it reads 97.06% of squares and 31.05% of boards
+      exactly &mdash; so treat a single reading as a good guess, not a fact.
+    </p>
+  </footer>
+
+</div>
+
+<script>
+  const drop = document.getElementById('drop');
+  const pick = document.getElementById('pick');
+  const fileInput = document.getElementById('file');
+  const status = document.getElementById('status');
+  const result = document.getElementById('result');
+  const overlay = document.getElementById('overlay');
+  const board = document.getElementById('board');
+  const fen = document.getElementById('fen');
+  const counts = document.getElementById('counts');
+  const copy = document.getElementById('copy');
+
+  function setStatus(text, kind, busy) {
+    status.dataset.kind = kind || 'idle';
+    status.textContent = '';
+    if (busy) {
+      const spinner = document.createElement('span');
+      spinner.className = 'spinner';
+      status.appendChild(spinner);
+    }
+    status.appendChild(document.createTextNode(text));
+  }
+
+  async function send(file) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setStatus('That file is not an image.', 'error', false);
+      return;
+    }
+    drop.classList.add('is-busy');
+    setStatus('reading ' + file.name + '…', 'idle', true);
+
+    try {
+      // The File goes up as the raw body -- no multipart to parse on the
+      // other side, and no copy of the bytes in memory here.
+      const response = await fetch('/read', { method: 'POST', body: file });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setStatus(data.error || 'The request failed.', 'error', false);
+        return;
+      }
+
+      overlay.src = data.overlay;
+      result.classList.add('is-shown');
+
+      if (!data.found) {
+        board.innerHTML = '';
+        fen.textContent = '—';
+        counts.textContent = '';
+        setStatus(
+          'No board found — the corner model did not find four corners.',
+          'none', false);
+        return;
+      }
+
+      board.innerHTML = data.diagram;
+      fen.textContent = data.fen;
+      counts.textContent =
+        data.on_board + ' pieces placed · ' +
+        data.pieces + ' boxes predicted · ' +
+        data.size[0] + '×' + data.size[1];
+      setStatus('Position read.', 'ok', false);
+    } catch (error) {
+      setStatus('Could not reach the server. Is it still running?',
+        'error', false);
+    } finally {
+      drop.classList.remove('is-busy');
+    }
+  }
+
+  pick.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => send(fileInput.files[0]));
+
+  ['dragenter', 'dragover'].forEach((name) =>
+    drop.addEventListener(name, (event) => {
+      event.preventDefault();
+      drop.classList.add('is-over');
+    }));
+
+  ['dragleave', 'drop'].forEach((name) =>
+    drop.addEventListener(name, (event) => {
+      event.preventDefault();
+      drop.classList.remove('is-over');
+    }));
+
+  drop.addEventListener('drop', (event) => {
+    send(event.dataTransfer.files[0]);
+  });
+
+  document.addEventListener('paste', (event) => {
+    const item = [...(event.clipboardData?.files || [])][0];
+    if (item) send(item);
+  });
+
+  copy.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(fen.textContent);
+    copy.textContent = 'Copied';
+    setTimeout(() => { copy.textContent = 'Copy'; }, 1200);
+  });
+</script>
+</body>
+</html>

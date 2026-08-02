@@ -1,5 +1,5 @@
 .PHONY: help install format lint test test-integration pre-commit clean \
-        doctor synth-smoke synth-sheet
+        doctor synth-smoke synth-sheet site site-refresh
 
 # Where generated datasets go. Override with `make synth-smoke RUN=/path/to/run`.
 RUN ?= $(HOME)/datasets/chesssight/smoke
@@ -15,6 +15,8 @@ help:
 	@echo "doctor           - Check Blender, GPU and output directory"
 	@echo "synth-smoke      - Render a small dataset and verify it"
 	@echo "synth-sheet      - Render a dataset and write an annotated contact sheet"
+	@echo "site             - Rebuild docs/index.html from the committed data"
+	@echo "site-refresh     - Re-measure the pipeline and redraw the site figures"
 	@echo "pre-commit       - Run pre-commit hooks on all files"
 	@echo "clean            - Remove cache files"
 
@@ -33,6 +35,19 @@ synth-sheet:
 
 test-integration:
 	uv run pytest tests/integration -v
+
+# The published page. `site` needs nothing but the repository; `site-refresh`
+# re-runs both models over a real split, so it needs the checkpoints.
+DETECTOR ?= $(HOME)/runs/rtdetr_corners/best
+CORNERS  ?= $(HOME)/runs/corner_swin_v2/best
+CHESSRED ?= $(HOME)/datasets/chesssight/chessred
+
+site:
+	uv run python scripts/build_site.py
+
+site-refresh:
+	uv run python scripts/build_site.py --refresh \
+	  --detector $(DETECTOR) --corners $(CORNERS) --data $(CHESSRED)
 
 install:
 	uv sync

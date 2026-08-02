@@ -32,6 +32,18 @@ train = [
     "scipy>=1.14,<2.0",
 ]
 
+# Running the exported graphs needs neither torch nor transformers.
+#   uv sync --extra onnx
+onnx = [
+    "onnxruntime>=1.20,<2.0",
+]
+
+# Writing the graphs additionally needs the exporter and a training install.
+#   uv sync --extra train --extra onnx --extra onnx-export
+onnx-export = [
+    "onnx>=1.17,<2.0",
+]
+
 # The RTX 50-series is Blackwell (sm_120); the default PyPI wheels do not carry
 # kernels for it, so torch and torchvision come from the CUDA 12.8 index.
 [[tool.uv.index]]
@@ -86,6 +98,10 @@ ignore_missing_imports = true
 # extra *is* installed, torch ships py.typed and is checked normally -- this
 # only stops CI failing on an absence it was configured to have. torchvision and
 # the rest additionally ship no py.typed marker, so they stay untyped either way.
+[[tool.mypy.overrides]]
+module = ["onnxruntime.*", "onnx.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]
 module = [
     "torch.*",

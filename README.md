@@ -17,6 +17,94 @@ uv run chesssight train video <checkpoint> -i clip.mp4 -o annotated.mp4
 uv run chesssight train predict <checkpoint> --data <run> --out sheet.png
 ```
 
+## Reading a position
+
+The detector and the corner model together turn a photograph into a FEN. On
+ChessReD's held-out test split that reads **99.25% of squares** and **68.30% of
+boards** exactly, with geometry found on 306 of 306 photographs.
+
+That depends on a detail worth knowing. A detector checkpoint ships a threshold
+fitted for detection **F1**, and reading a board is a different objective:
+`grid_from` keeps only the best-scoring detection per square and discards
+anything off the board, so a spare low-scoring candidate is usually harmless
+while a missing one always costs a square. `POSITION_THRESHOLD` (0.10, chosen on
+val and measured on test) is the default everywhere the pipeline reads a
+position; `--threshold` overrides it. At the calibration's own 0.331 the same
+checkpoints read 97.06% / 31.05%.
+
+```bash
+uv run chesssight predict photo.jpg \
+  --detector ~/runs/rtdetr_corners/best \
+  --corners  ~/runs/corner_swin_v2/best --diagram position.svg
+```
+
+`chesssight demo` puts a browser in front of the same pipeline: drop or paste a
+photograph and get the overlay, the FEN and a board diagram back. It is built on
+`http.server`, so it adds no dependencies, and it binds to localhost.
+
+```bash
+uv run chesssight demo --detector <detector> --corners <corners>
+```
+
+### Without torch
+
+Both models export to ONNX and then run under `onnxruntime` alone — **94 MB of
+wheels against 6.5 GB** for the training stack, which is the whole point; CPU
+speed is within 10% of torch either way.
+
+```bash
+uv sync --extra train --extra onnx --extra onnx-export   # exporting needs torch
+uv run chesssight onnx export --detector <detector> --corners <corners> -o bundle
+
+uv sync --extra onnx                                     # running does not
+uv run chesssight demo --onnx bundle
+```
+
+The backend imports every rule that decides *meaning* — labels, square
+assignment, orientation, FEN — and reimplements only the numeric plumbing on
+either side of the model. Because that is a second copy of a rule, it is
+checked rather than trusted:
+
+```bash
+uv run chesssight onnx parity bundle --detector <detector> --corners <corners> \
+  --data ~/datasets/chesssight/chessred
+```
+
+Parity compares model outputs (which must agree to `--tolerance`) and FENs
+(which are reported, not required to match). Exact FEN equality is *not*
+expected: the operating threshold sits in a dense part of the score
+distribution, so a detection within a thousandth of it flips on floating-point
+noise. Measured end to end on the ChessReD test split, the two backends land
+within a rounding error of each other:
+
+| | torch | ONNX |
+|---|---|---|
+| per-square | 97.06% | 97.04% |
+| boards exact | 31.05% | 30.72% |
+| geometry found | 306/306 | 306/306 |
+
+(Both measured at the old 0.331 operating point, before `POSITION_THRESHOLD`
+became the default; the two backends share it, so the comparison holds.)
+
+**Do not ship the int8 graphs.** Dynamic quantisation takes the bundle from
+288 MB to 79 MB, which is tempting for anywhere the weights have to travel, and
+it costs far more than the file size suggests: on a matched 60-image subset,
+per-square falls 97.01% -> 94.48% and boards-exact **26.67% -> 11.67%**. The
+model's weakness is already small objects, and that is exactly what 8-bit
+weights blur away.
+
+### The published page
+
+`docs/` is a GitHub Pages site showing the same four worked examples and the
+measured numbers. `make site` rebuilds the HTML from the committed
+`docs/data.json` and needs nothing but the repository; `make site-refresh`
+re-runs both models over the test split and redraws every figure, so it needs
+the checkpoints. The prose states how many squares each example gets wrong and
+the refresh fails rather than publish a figure that no longer matches.
+
+The example photographs come from ChessReD and stay **CC BY-NC-SA 4.0** — not
+this repository's MIT licence. See [docs/assets/ATTRIBUTION.md](docs/assets/ATTRIBUTION.md).
+
 ## Synthetic dataset generator
 
 Training a model to read a position off a photograph needs far more labelled boards
