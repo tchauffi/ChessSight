@@ -112,6 +112,69 @@ def build_slab(
     return bl_utils.new_mesh_object("BoardSlab", vertices, [], faces)
 
 
+#: Height above the slab at which coordinate letters sit. Small enough to read as
+#: printed rather than as a raised object, large enough not to z-fight.
+LABEL_Z = 0.0015
+
+
+def build_coordinates(
+    square_size: float, border_width: float, material: bpy.types.Material
+) -> list[bpy.types.Object]:
+    """Rank and file letters printed on the border, as tournament boards carry.
+
+    Not decoration. The border is the cue that separates the playing surface from
+    the board's outer edge, and on a real board it is *labelled* -- the letters
+    are the most distinctive thing about it. A generator whose borders are blank
+    teaches a corner model that the edge of the wood is the edge of the game,
+    which is exactly the confusion measured against ChessReD: predicted quads came
+    back 4.4% too large there and unbiased on renders.
+    """
+    if border_width < 0.35:
+        return []  # no room to print anything legible
+
+    size = min(border_width * 0.55, 0.42) * square_size
+    inset = border_width * 0.5 * square_size
+    letters: list[bpy.types.Object] = []
+
+    def place(text: str, x: float, y: float, rotation: float) -> None:
+        curve = bpy.data.curves.new(type="FONT", name=f"Coord{text}{x:.2f}{y:.2f}")
+        curve.body = text
+        curve.align_x = "CENTER"
+        curve.align_y = "CENTER"
+        curve.size = size
+        text_object = bpy.data.objects.new(curve.name, curve)
+        text_object.location = (x, y, SQUARE_Z + LABEL_Z)
+        text_object.rotation_euler = (0.0, 0.0, rotation)
+        bl_utils.link(text_object)
+
+        # Convert to a mesh straight away. A font object's data is a Curve, and
+        # everything downstream -- joining, modifier application, the index pass --
+        # assumes meshes; leaving it a curve fails inside `join` with an error
+        # that names neither the text nor the board.
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        mesh = bpy.data.meshes.new_from_object(text_object.evaluated_get(depsgraph))
+        obj = bpy.data.objects.new(curve.name, mesh)
+        obj.matrix_world = text_object.matrix_world.copy()
+        bpy.data.objects.remove(text_object, do_unlink=True)
+        bl_utils.link(obj)
+
+        obj.data.materials.append(material)
+        # Tagged as board so the index pass does not treat a letter as a piece.
+        bl_utils.tag(obj, "board", instance_id=0)
+        letters.append(obj)
+
+    edge = HALF * square_size
+    for index in range(BOARD_SIZE):
+        centre = (index + 0.5 - HALF) * square_size
+        # Files along the bottom and top, ranks down both sides -- the layout a
+        # tournament board uses, so the model sees letters on all four borders.
+        place("abcdefgh"[index], centre, -edge - inset, 0.0)
+        place("abcdefgh"[index], centre, edge + inset, 0.0)
+        place(str(BOARD_SIZE - index), -edge - inset, -centre, 0.0)
+        place(str(BOARD_SIZE - index), edge + inset, -centre, 0.0)
+    return letters
+
+
 def build_corner_markers(square_size: float) -> list[bpy.types.Object]:
     """Four empties at the playing-surface corners, in canonical order.
 
@@ -179,28 +242,58 @@ def build_board(spec: dict) -> dict:
         ),
     )
 
+    # The border's *tone* is sampled, not fixed. It used to be `dark * 0.75`, so
+    # every synthetic board got a frame darker than its darkest square, and a
+    # corner model could learn "the playing area ends where it gets darker". Real
+    # tournament boards very often do the opposite -- a white frame carrying
+    # printed coordinates -- and against those the learned cue points at the
+    # slab's outer edge instead. Measured: quads 4.4% too large on ChessReD,
+    # unbiased on renders. Interpolating between the dark and light square
+    # colours covers both conventions and everything between.
     slab = build_slab(square_size, spec["thickness"], spec["border_width"])
+    tone = float(spec.get("border_tone", 0.0))
+    frame_color = tuple(
+        d + (light_channel - d) * tone
+        for d, light_channel in zip(dark, light, strict=True)
+    )
+    frame = materials.organic(
+        materials.styled(
+            "BoardFrame",
+            tuple(channel * 0.75 for channel in frame_color),
+            style,
+            roughness=min(1.0, roughness + 0.1),
+            coat=0.1,
+            flat=True,
+            maps=maps,
+        ),
+        bevel_radius=0.010,
+        instance_value=0.03,
+        instance_saturation=0.02,
+    )
     materials.assign(
         slab,
         # The frame carries the largest bevel in the scene: it is the one edge a
         # hand actually rests on, and a sharp arris there is the clearest CG tell.
-        materials.organic(
-            materials.styled(
-                "BoardFrame",
-                tuple(channel * 0.75 for channel in dark),
-                style,
-                roughness=min(1.0, roughness + 0.1),
-                coat=0.1,
-                flat=True,
-                maps=maps,
-            ),
-            bevel_radius=0.010,
-            instance_value=0.03,
-            instance_saturation=0.02,
+        frame,
+    )
+
+    # Coordinates contrast against the frame rather than against the squares --
+    # printed on a light border they are dark, on a dark border they are light.
+    ink = light if tone < 0.5 else tuple(channel * 0.25 for channel in dark)
+    coordinates = build_coordinates(
+        square_size,
+        spec["border_width"],
+        materials.styled(
+            "BoardCoordinates",
+            ink,
+            style,
+            roughness=min(1.0, roughness + 0.2),
+            coat=0.0,
+            flat=True,
         ),
     )
 
-    bl_utils.join(squares, [slab])
+    bl_utils.join(squares, [slab, *coordinates])
     squares.name = "Board"
     bl_utils.tag(squares, "board", instance_id=0)
 

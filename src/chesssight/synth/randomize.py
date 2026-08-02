@@ -494,6 +494,7 @@ def resolve_board(config: GeneratorConfig, rng: random.Random) -> ResolvedBoard:
         square_size=board.square_size,
         thickness=board.thickness.sample(rng),
         border_width=board.border_width.sample(rng),
+        border_tone=board.border_tone.sample(rng),
         light_color=light,
         dark_color=dark,
         roughness=board.roughness.sample(rng),

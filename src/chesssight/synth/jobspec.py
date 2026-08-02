@@ -120,6 +120,7 @@ class ResolvedBoard(StrictModel):
     square_size: float = Field(gt=0)
     thickness: float = Field(gt=0)
     border_width: float = Field(ge=0)
+    border_tone: float = Field(default=0.0, ge=0.0, le=1.0)
     light_color: RGB
     dark_color: RGB
     roughness: float = Field(ge=0, le=1)

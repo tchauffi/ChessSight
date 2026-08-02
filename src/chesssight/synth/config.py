@@ -145,6 +145,13 @@ class BoardConfig(StrictModel):
     square_size: float = Field(default=1.0, gt=0)
     thickness: FloatRange = FloatRange(min=0.15, max=0.5)
     border_width: FloatRange = FloatRange(min=0.0, max=1.0)
+    #: How light the border is, 0 being the dark squares' colour and 1 the light
+    #: squares'. Sampled across the whole range because both conventions are
+    #: common: club boards often have a frame darker than the dark squares, and
+    #: tournament boards a white one carrying printed coordinates. Rendering only
+    #: the dark convention -- which this generator did until now -- teaches a
+    #: corner model that the playing area ends wherever the surface darkens.
+    border_tone: FloatRange = FloatRange(min=0.0, max=1.0)
     light_square_color: list[RGB] = [
         [0.72, 0.62, 0.46],
         [0.85, 0.82, 0.75],
