@@ -1,0 +1,90 @@
+# A small, fully-randomised sample dataset -- enough to inspect the label quality and
+# the spread of the randomisation without committing to a full run.
+#
+#   uv run chesssight synth run -c configs/sample.yaml -w 2
+#
+# Mixes the baked Staunton set with the procedural one. Drop the Staunton entry
+# under `pieces.sets` for the dependency-free path.
+count: 200
+master_seed: 20260729
+
+render:
+  engine: CYCLES
+  samples: 96
+  resolution: [512, 512]
+  use_gpu: true
+  compute_device_type: OPTIX
+  denoise: true
+  image_format: JPEG
+  jpeg_quality: 92
+  render_id_pass: true
+
+camera:
+  azimuth_deg: {min: 0.0, max: 360.0}
+  # Down to 8 degrees so the set includes the grazing, near edge-on angles that
+  # hand-held phone photographs and broadcast cameras across a table give.
+  elevation_deg: {min: 8.0, max: 75.0}
+  # Below 1.0 crops the board, which real photographs do constantly.
+  framing_margin: {min: 0.95, max: 1.9}
+  focal_mm: {min: 24.0, max: 85.0}
+  roll_deg: {min: -6.0, max: 6.0}
+  target_jitter: {min: -1.2, max: 1.2}
+  dof_probability: 0.35
+
+lighting:
+  # Fetch maps with `chesssight assets hdri`. An HDRI replaces the procedural sun
+  # and fills rather than adding to them, and doubles as the backdrop; a missing
+  # directory silently falls back to the procedural rig.
+  hdri_dir: ~/assets/chesssight/hdri
+  hdri_probability: 1.0
+  hdri_strength: {min: 0.5, max: 1.6}
+  world_strength: {min: 0.3, max: 2.5}
+  world_color_temperature: {min: 3200.0, max: 7500.0}
+  sun_energy: {min: 1.0, max: 6.0}
+  sun_angle_deg: {min: 0.5, max: 8.0}
+  lamp_count: {min: 0, max: 2}
+
+board:
+  thickness: {min: 0.15, max: 0.5}
+  border_width: {min: 0.0, max: 1.0}
+  color_jitter: {min: -0.18, max: 0.18}
+
+pieces:
+  # Both sets, drawn per scene, so a sample run shows the shape spread the full
+  # dataset has. Drop the Staunton entry to run without the baked assets.
+  sets:
+    - {provider: uppachess-staunton, asset_manifest: assets/baked/manifest.json, weight: 0.6}
+    - {provider: procedural, weight: 0.4}
+  taper: {min: -0.12, max: 0.12}
+  height_scale: {min: 0.92, max: 1.08}
+  radius_scale: {min: 0.92, max: 1.08}
+  position_jitter: {min: -0.16, max: 0.16}
+  knight_facing_jitter_deg: {min: -30.0, max: 30.0}
+  tipped_probability: 0.02
+  # Captured pieces beside the board, as a game in progress accumulates. Drawn from
+  # the pieces actually missing from the position, so the pile always agrees with
+  # the board. They appear in `pieces` with `on_board: false` and no square --
+  # which is what teaches a model that a visible piece is not the same thing as an
+  # occupied square.
+  captured_probability: 0.4
+  captured_count: {min: 1, max: 12}
+  captured_lying_probability: 0.25
+
+scene:
+  distractor_probability: 0.3
+  distractor_count: {min: 0, max: 3}
+
+positions:
+  # No PGN configured, so every position comes from the random sampler: legal piece
+  # counts, both kings, no back-rank pawns, but not drawn from real games. Point
+  # `pgn_paths` at a Lichess dump for realistic structures.
+  pgn_paths: []
+  weight_pgn: 0.0
+  weight_random: 1.0
+  random_min_pieces: 3
+  random_max_pieces: 32
+
+output:
+  root: ~/datasets/chesssight
+  run_name: sample
+  split: train

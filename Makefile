@@ -1,31 +1,56 @@
-.PHONY: help install format lint test pre-commit clean
+.PHONY: help install format lint test test-integration pre-commit clean \
+        doctor synth-smoke synth-sheet
+
+# Where generated datasets go. Override with `make synth-smoke RUN=/path/to/run`.
+RUN ?= $(HOME)/datasets/chesssight/smoke
+N ?= 16
 
 help:
 	@echo "Available commands:"
-	@echo "install    - Install project dependencies and pre-commit hooks"
-	@echo "format     - Format code using black and ruff"
-	@echo "lint       - Run all linters (ruff, mypy)"
-	@echo "test       - Run tests"
-	@echo "pre-commit - Run pre-commit hooks on all files"
-	@echo "clean      - Remove cache files"
+	@echo "install          - Install project dependencies and pre-commit hooks"
+	@echo "format           - Format code using black and ruff"
+	@echo "lint             - Run all linters (ruff, mypy)"
+	@echo "test             - Run unit tests (no Blender required)"
+	@echo "test-integration - Run tests that launch Blender"
+	@echo "doctor           - Check Blender, GPU and output directory"
+	@echo "synth-smoke      - Render a small dataset and verify it"
+	@echo "synth-sheet      - Render a dataset and write an annotated contact sheet"
+	@echo "pre-commit       - Run pre-commit hooks on all files"
+	@echo "clean            - Remove cache files"
+
+doctor:
+	uv run chesssight doctor
+
+synth-smoke:
+	uv run chesssight synth run -c configs/smoke.yaml -n $(N) -o $(RUN)
+	uv run chesssight synth verify $(RUN)
+	uv run chesssight qa stats $(RUN)
+
+synth-sheet:
+	uv run chesssight synth run -c configs/smoke.yaml -n $(N) -o $(RUN)
+	uv run chesssight qa overlay $(RUN) -n 8 --sheet $(RUN)/sheet.png
+	@echo "wrote $(RUN)/sheet.png"
+
+test-integration:
+	uv run pytest tests/integration -v
 
 install:
-	poetry install
-	poetry run pre-commit install
+	uv sync
+	uv run pre-commit install
 
 format:
-	poetry run black .
-	poetry run ruff check --fix .
+	uv run black .
+	uv run ruff check --fix .
 
 lint:
-	poetry run ruff check .
-	poetry run mypy .
+	uv run ruff check .
+	uv run mypy .
 
 test:
-	poetry run pytest
+	uv run pytest
 
 pre-commit:
-	poetry run pre-commit run --all-files
+	uv run pre-commit run --all-files
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
