@@ -212,6 +212,19 @@ def collect(
     already = writer.existing_ids()
     suffix = ".jpg" if config.render.image_format == "JPEG" else ".png"
 
+    # Jobs that died inside Blender wrote an error file and no label file, so
+    # they never appear in the loop below and used to be invisible to the run's
+    # summary: one run reported "2415 ok, 0 failed" while its shard log said
+    # 3585 had failed. A dataset missing most of its images must not report as
+    # clean, so they are counted here from what is on disk.
+    for error_path in sorted(raw_dir.glob("*.error.txt")):
+        sample_id = error_path.name.removesuffix(".error.txt")
+        if sample_id in already or (raw_dir / f"{sample_id}.json").exists():
+            continue  # re-rendered successfully since
+        message = error_path.read_text(encoding="utf-8", errors="replace")
+        result.failed += 1
+        result.failures.append((sample_id, message.strip().splitlines()[-1]))
+
     for raw_path in sorted(raw_dir.glob("*.json")):
         sample_id = raw_path.stem
         result.planned += 1

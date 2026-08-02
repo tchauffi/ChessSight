@@ -150,6 +150,40 @@ class TestCollect:
         assert writer.failures_path.is_file()
         assert "000001" in writer.failures_path.read_text()
 
+    def _write_error(self, writer, sample_id: str, message: str) -> None:
+        path = writer.root / jobs.RAW_LABELS_DIRNAME / f"{sample_id}.error.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"Traceback...\n{message}\n", encoding="utf-8")
+
+    def test_a_job_that_died_in_blender_is_counted(self, tmp_path: Path):
+        # Regression: these write an error file and no label file, so they never
+        # entered the collect loop and the run reported "2415 ok, 0 failed"
+        # while its shard log said 3585 had failed. A dataset missing most of
+        # its images must not summarise as clean.
+        config = make_config(tmp_path)
+        writer, _, _ = runner.plan(config)
+        self._write_raw(writer, "000000")
+        self._write_error(writer, "000001", "AssetError: cannot read manifest")
+        self._write_error(writer, "000002", "AssetError: cannot read manifest")
+
+        result = runner.collect(writer, config, quiet=True)
+        assert result.rendered == 1
+        assert result.failed == 2
+        assert any("manifest" in reason for _, reason in result.failures)
+
+    def test_a_job_that_was_re_rendered_is_not_still_counted(self, tmp_path: Path):
+        # A stale error file beside a good label file means the sample was
+        # retried and worked; counting it would make every resumed run look
+        # permanently broken.
+        config = make_config(tmp_path)
+        writer, _, _ = runner.plan(config)
+        self._write_raw(writer, "000000")
+        self._write_error(writer, "000000", "a failure that was later fixed")
+
+        result = runner.collect(writer, config, quiet=True)
+        assert result.rendered == 1
+        assert result.failed == 0
+
     def test_missing_raw_directory_is_not_an_error(self, tmp_path: Path):
         config = make_config(tmp_path)
         writer, _, _ = runner.plan(config)
