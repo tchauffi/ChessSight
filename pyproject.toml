@@ -81,9 +81,19 @@ exclude = ["^src/chesssight/blender/"]
 module = ["chesssight.blender.*"]
 ignore_missing_imports = true
 
-# torchvision ships no py.typed marker, so its transforms are untyped to mypy.
+# Training is an opt-in extra, so CI type-checks without torch installed at all
+# and every `import torch` is an unresolved module there. Locally, where the
+# extra *is* installed, torch ships py.typed and is checked normally -- this
+# only stops CI failing on an absence it was configured to have. torchvision and
+# the rest additionally ship no py.typed marker, so they stay untyped either way.
 [[tool.mypy.overrides]]
-module = ["torchvision.*", "transformers.*", "torchmetrics.*"]
+module = [
+    "torch.*",
+    "timm.*",
+    "torchvision.*",
+    "transformers.*",
+    "torchmetrics.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

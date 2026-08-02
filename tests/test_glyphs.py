@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import itertools
 
+import numpy as np
 import pytest
 from PIL import Image, ImageChops, ImageDraw
 
@@ -36,10 +37,13 @@ def render(class_id: int, *, body=WHITE_BODY, ink=BLACK_BODY, size=SIZE) -> Imag
 
 
 def ink_pixels(image: Image.Image) -> int:
+    """How many pixels differ from the flat background."""
     background = Image.new("RGB", image.size, (128, 128, 128))
-    return sum(
-        1 for pixel in ImageChops.difference(image, background).getdata() if any(pixel)
-    )
+    difference = ImageChops.difference(image, background)
+    # Via numpy rather than `getdata()`: Pillow types that as an ImagingCore,
+    # which mypy does not consider iterable, and the per-pixel Python loop is
+    # slower than the array reduction anyway.
+    return int(np.asarray(difference).any(axis=2).sum())
 
 
 WHITE_PIECES = [LETTER_TO_CLASS[letter] for letter in "PNBRQK"]
@@ -66,7 +70,7 @@ class TestDistinctness:
     def test_no_two_pieces_look_alike(self, first, second):
         # The one thing a diagram must never do is render a bishop as a pawn.
         difference = ImageChops.difference(render(first), render(second))
-        changed = sum(1 for pixel in difference.getdata() if any(pixel))
+        changed = int(np.asarray(difference).any(axis=2).sum())
         assert changed > SIZE * SIZE * 0.02
 
     def test_the_two_colours_share_a_silhouette(self):
