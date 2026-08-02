@@ -420,19 +420,6 @@ def save(model: CornerHeatmapNet, config: HeatmapConfig, path: Path) -> None:
     (path / "config.json").write_text(config.to_json(), encoding="utf-8")
 
 
-def load_gated(path: Path, device: torch.device | str = "cpu"):
-    """A saved model, its config, and its fitted refusal threshold if it has one.
-
-    Prefer this over :func:`load` at inference. A model loaded without its gate
-    answers every image, including the ones it has no business answering, and
-    the caller has no way to tell those apart.
-    """
-    from chesssight.train.gate import Gate
-
-    model, config = load(path, device)
-    return model, config, Gate.load(Path(path))
-
-
 def load(path: Path, device: torch.device | str = "cpu"):
     """Reload a saved corner model and the config it was built with."""
     path = Path(path)

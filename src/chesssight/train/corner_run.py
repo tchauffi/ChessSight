@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -18,9 +17,6 @@ from torch.utils.data import ConcatDataset, DataLoader
 
 from chesssight.data.dataset import DatasetReader
 from chesssight.train.corners import corner_error
-
-if TYPE_CHECKING:
-    from chesssight.train.gate import Gate
 from chesssight.train.dataset import (
     CornerHeatmapDataset,
     SplitSpec,
@@ -372,56 +368,6 @@ def evaluate_samples(
             float(np.median(squares)) if squares else float("nan")
         ),
     }
-
-
-@torch.no_grad()
-def fit_gate(
-    model,
-    reader: DatasetReader,
-    device: torch.device,
-    *,
-    split: str = "val",
-    input_size: int = 448,
-    stride: int = 4,
-    limit: int | None = None,
-    split_spec: SplitSpec | None = None,
-) -> "Gate":
-    """Fit the peak-confidence threshold that decides when to refuse a board.
-
-    Fit on validation, never on test: the threshold is a parameter like any
-    other, and choosing it on the split the result is quoted from would make
-    that result a description of the fitting data.
-    """
-    from PIL import Image
-
-    from chesssight.train.dataset import select_entries
-    from chesssight.train.gate import fit as fit_threshold
-    from chesssight.train.heatmap import peaks_in_image, preprocess, square_size
-
-    entries, _ = select_entries(
-        reader.entries(), split=split, spec=split_spec or SplitSpec()
-    )
-    if limit is not None:
-        entries = entries[:limit]
-
-    scores: list[float] = []
-    errors: list[float | None] = []
-    for entry in entries:
-        sample = reader.load(entry.id)
-        image = Image.open(reader.root / sample.image).convert("RGB")
-        truth = [[float(x), float(y)] for x, y in sample.board.corners_px]
-        logits = model(preprocess(image, input_size).to(device)).float().cpu()
-        peaks = peaks_in_image(
-            logits, size=image.size, input_size=input_size, stride=stride
-        )
-        scores.append(min(score for _, _, score in peaks))
-        quad = quad_from_logits(
-            logits, size=image.size, input_size=input_size, stride=stride
-        )
-        error = corner_error(quad, truth) if quad else None
-        errors.append(None if error is None else error / square_size(truth))
-
-    return fit_threshold(scores, errors, split=split)
 
 
 def format_report(metrics: dict) -> str:
