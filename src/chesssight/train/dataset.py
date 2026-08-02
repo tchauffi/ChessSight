@@ -312,6 +312,310 @@ class ChessDetectionDataset(Dataset):
         }
 
 
+class CornerHeatmapDataset(Dataset):
+    """Images plus a corner heatmap target from a ChessSight run.
+
+    Shares :class:`SplitSpec` and :func:`select_entries` with the detection
+    dataset, so a corner model trained here has never seen the detector's
+    validation images -- which it would silently have done under a second,
+    separately-written split rule.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        image_size: int = 448,
+        stride: int = 4,
+        sigma: float = 2.0,
+        split: str = "train",
+        split_spec: SplitSpec | None = None,
+        limit: int | None = None,
+        split_source: str = "auto",
+        transform=None,
+    ) -> None:
+        if split not in ("train", "val", "test", "all"):
+            raise ValueError(f"split must be train, val, test or all; got {split!r}")
+
+        self.root = Path(root)
+        self.image_size = image_size
+        self.stride = stride
+        self.sigma = sigma
+        self.transform = transform
+
+        reader = DatasetReader(self.root)
+        entries, self.split_source = select_entries(
+            reader.entries(),
+            split=split,
+            spec=split_spec or SplitSpec(),
+            split_source=split_source,
+        )
+        if limit is not None:
+            entries = entries[:limit]
+        if not entries:
+            raise ValueError(f"no samples in split {split!r} under {self.root}")
+        self.ids = [entry.id for entry in entries]
+        self._reader = reader
+
+    def __len__(self) -> int:
+        return len(self.ids)
+
+    def sample(self, index: int) -> Sample:
+        return self._reader.load(self.ids[index])
+
+    def __getitem__(self, index: int) -> dict:
+        from chesssight.train.heatmap import preprocess, render_target
+
+        sample = self.sample(index)
+        image = Image.open(self.root / sample.image).convert("RGB")
+        points = [[float(x), float(y)] for x, y in sample.board.corners_px]
+
+        if self.transform is not None:
+            from chesssight.train.augment import apply_corners
+
+            image, points = apply_corners(self.transform, image, points)
+        else:
+            # No augmentation still means a resize to the working square, and the
+            # points must follow it: the two axes scale independently when the
+            # source is not square.
+            width, height = image.size
+            scale_x = self.image_size / width
+            scale_y = self.image_size / height
+            image = image.resize((self.image_size, self.image_size))
+            points = [[x * scale_x, y * scale_y] for x, y in points]
+
+        target = render_target(
+            points, self.image_size, stride=self.stride, sigma=self.sigma
+        )
+        return {
+            "pixel_values": preprocess(image, self.image_size).squeeze(0),
+            "target": target,
+            # Kept so validation can measure pixel error against the points the
+            # model was actually shown, augmentation included.
+            "points": torch.tensor(points, dtype=torch.float32),
+            "visible": torch.tensor(
+                [
+                    0 <= x < self.image_size and 0 <= y < self.image_size
+                    for x, y in points
+                ],
+                dtype=torch.bool,
+            ),
+        }
+
+
+class BoxCornerDataset(Dataset):
+    """A crop around the board box, and the corners in that crop's coordinates.
+
+    Shares :func:`select_entries` with every other loader here, so a model
+    trained on this has not seen the others' validation images.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        image_size: int = 224,
+        margin: float = 0.25,
+        jitter_scale: float = 0.0,
+        jitter_shift: float = 0.0,
+        split: str = "train",
+        split_spec: SplitSpec | None = None,
+        limit: int | None = None,
+        split_source: str = "auto",
+        seed: int = 0,
+    ) -> None:
+        self.root = Path(root)
+        self.image_size = image_size
+        self.margin = margin
+        self.jitter_scale = jitter_scale
+        self.jitter_shift = jitter_shift
+        self.seed = seed
+
+        reader = DatasetReader(self.root)
+        entries, self.split_source = select_entries(
+            reader.entries(),
+            split=split,
+            spec=split_spec or SplitSpec(),
+            split_source=split_source,
+        )
+        if limit is not None:
+            entries = entries[:limit]
+        if not entries:
+            raise ValueError(f"no samples in split {split!r} under {self.root}")
+        self.ids = [entry.id for entry in entries]
+        self._reader = reader
+
+    def __len__(self) -> int:
+        return len(self.ids)
+
+    def sample(self, index: int) -> Sample:
+        return self._reader.load(self.ids[index])
+
+    def __getitem__(self, index: int) -> dict:
+        import numpy as np
+
+        from chesssight.train.boxcorners import crop_box, jitter, prepare, to_box_space
+        from chesssight.train.corners import order_clockwise
+
+        sample = self.sample(index)
+        box = board_bbox(sample)
+        if box is None:
+            raise ValueError(f"sample {sample.id} has no usable board box")
+
+        raw = (box.x, box.y, box.x + box.width, box.y + box.height)
+        if self.jitter_scale or self.jitter_shift:
+            # Seeded per sample and per epoch-independent index so a validation
+            # set built with jitter is still the same set every time it is used.
+            rng = np.random.default_rng(self.seed + index)
+            raw = jitter(raw, rng, scale=self.jitter_scale, shift=self.jitter_shift)
+        crop = crop_box(raw, self.margin)
+
+        # Ordered in crop space, which is where the model sees them: the target
+        # has to be a deterministic function of the picture, or two images that
+        # look identical carry different labels and the regression cannot fit.
+        corners = order_clockwise(
+            [(float(x), float(y)) for x, y in sample.board.corners_px]
+        )
+        target = to_box_space(corners, crop)
+
+        image = Image.open(self.root / sample.image)
+        return {
+            "pixel_values": prepare(image, crop, self.image_size).squeeze(0),
+            "target": torch.tensor(target, dtype=torch.float32),
+        }
+
+
+class RectifiedBoardDataset(Dataset):
+    """A board warped to a canonical square, and its 8x8 grid of class ids."""
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        image_size: int = 448,
+        side_margin: float = 1.65,
+        far_margin: float = 2.5,
+        corner_jitter: float = 0.0,
+        split: str = "train",
+        split_spec: SplitSpec | None = None,
+        limit: int | None = None,
+        split_source: str = "auto",
+        transform=None,
+        seed: int = 0,
+    ) -> None:
+        self.root = Path(root)
+        self.image_size = image_size
+        self.side_margin = side_margin
+        self.far_margin = far_margin
+        self.corner_jitter = corner_jitter
+        self.transform = transform
+        self.seed = seed
+
+        reader = DatasetReader(self.root)
+        entries, self.split_source = select_entries(
+            reader.entries(),
+            split=split,
+            spec=split_spec or SplitSpec(),
+            split_source=split_source,
+        )
+        if limit is not None:
+            entries = entries[:limit]
+        if not entries:
+            raise ValueError(f"no samples in split {split!r} under {self.root}")
+        self.ids = [entry.id for entry in entries]
+        self._reader = reader
+
+    def __len__(self) -> int:
+        return len(self.ids)
+
+    def sample(self, index: int) -> Sample:
+        return self._reader.load(self.ids[index])
+
+    def __getitem__(self, index: int) -> dict:
+        import numpy as np
+
+        from chesssight.train.gridnet import prepare, to_tensor
+        from chesssight.train.rectify import rectify
+
+        sample = self.sample(index)
+        corners = [[float(x), float(y)] for x, y in sample.board.corners_px]
+
+        if self.corner_jitter:
+            # Perturb by a fraction of a *square*, not of the image: the same
+            # pixel error means very different things on a close-up and a
+            # distant board, and the model is deployed behind a corner detector
+            # whose error is naturally measured in squares.
+            rng = np.random.default_rng(self.seed + index)
+            side = (
+                float(
+                    np.mean(
+                        [
+                            np.linalg.norm(
+                                np.asarray(corners[i])
+                                - np.asarray(corners[(i + 1) % len(corners)])
+                            )
+                            for i in range(len(corners))
+                        ]
+                    )
+                )
+                / 8.0
+            )
+            corners = [
+                [
+                    x + rng.normal(0, self.corner_jitter) * side,
+                    y + rng.normal(0, self.corner_jitter) * side,
+                ]
+                for x, y in corners
+            ]
+
+        image = Image.open(self.root / sample.image)
+        warped = rectify(
+            image,
+            corners,
+            size=self.image_size,
+            side=self.side_margin,
+            far=self.far_margin,
+        )
+        # Augment on the tensor, not the PIL image: the sensor-realism steps
+        # are tensor-only and raise on a PIL input.
+        pixels = to_tensor(warped)
+        if self.transform is not None:
+            pixels = self.transform(pixels)
+
+        grid = [[0] * 8 for _ in range(8)]
+        for square_index, square in enumerate(sample.squares):
+            grid[square_index // 8][square_index % 8] = square.occupant or 0
+
+        return {
+            "pixel_values": prepare(pixels, self.image_size).squeeze(0),
+            "target": torch.tensor(grid, dtype=torch.long),
+        }
+
+
+def collate_grid(batch: Sequence[dict]) -> dict:
+    return {
+        "pixel_values": torch.stack([item["pixel_values"] for item in batch]),
+        "target": torch.stack([item["target"] for item in batch]),
+    }
+
+
+def collate_box_corners(batch: Sequence[dict]) -> dict:
+    return {
+        "pixel_values": torch.stack([item["pixel_values"] for item in batch]),
+        "target": torch.stack([item["target"] for item in batch]),
+    }
+
+
+def collate_corners(batch: Sequence[dict]) -> dict:
+    """Stack a corner batch. Point counts are fixed at four, so everything stacks."""
+    return {
+        "pixel_values": torch.stack([item["pixel_values"] for item in batch]),
+        "target": torch.stack([item["target"] for item in batch]),
+        "points": torch.stack([item["points"] for item in batch]),
+        "visible": torch.stack([item["visible"] for item in batch]),
+    }
+
+
 def collate(batch: Sequence[dict]) -> dict:
     """Stack a batch, keeping per-image label dicts as a list.
 

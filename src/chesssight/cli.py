@@ -128,6 +128,19 @@ def synth_run(
         store_masks=not no_masks,
     )
     if result.failed:
+        # Name the commonest reason. Every failure is already on disk in
+        # raw_labels/*.error.txt, but a run that loses most of its samples to one
+        # repeated cause should say so here rather than leave it to whoever
+        # thinks to read a log -- the whole point is that a short dataset is easy
+        # to mistake for a finished one.
+        from collections import Counter
+
+        reasons = Counter(reason for _, reason in result.failures)
+        typer.echo(
+            f"[chesssight] {result.failed} sample(s) failed; "
+            f"most common: {reasons.most_common(1)[0][0][:160]}",
+            err=True,
+        )
         raise typer.Exit(1)
 
 
@@ -638,6 +651,365 @@ def train_detr(
     run_training(config, device=device)
 
 
+@train_app.command("corners")
+def train_corners(
+    data: Annotated[
+        list[Path],
+        typer.Argument(help="One or more run directories to train on."),
+    ],
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Where to save checkpoints.")
+    ],
+    backbone: Annotated[
+        str,
+        typer.Option(
+            "--backbone",
+            help="Any torchvision ResNet. The task is geometric, not semantic, "
+            "so a bigger backbone mostly buys cost.",
+        ),
+    ] = "resnet18",
+    epochs: Annotated[int, typer.Option("--epochs", "-e")] = 20,
+    batch_size: Annotated[int, typer.Option("--batch-size", "-b")] = 16,
+    lr: Annotated[float, typer.Option("--lr")] = 3e-4,
+    image_size: Annotated[int, typer.Option("--image-size")] = 448,
+    sigma: Annotated[
+        float,
+        typer.Option(
+            "--sigma",
+            help="Target peak width in heatmap cells. Too wide and two corners "
+            "of a steeply-angled board merge into one blob.",
+        ),
+    ] = 2.0,
+    workers: Annotated[int, typer.Option("--workers", "-w")] = 8,
+    val_fraction: Annotated[float, typer.Option("--val-fraction")] = 0.1,
+    test_fraction: Annotated[float, typer.Option("--test-fraction")] = 0.1,
+    augment: Annotated[bool, typer.Option("--augment/--no-augment")] = True,
+    val_data: Annotated[
+        Path | None,
+        typer.Option(
+            "--val-data",
+            help="A dataset to select the checkpoint on that is never trained "
+            "on. Point it at the real set: synthetic corner error plateaus "
+            "while real error is still moving, so selecting on renders past "
+            "that point picks on noise in the wrong domain.",
+        ),
+    ] = None,
+    eval_dataset: Annotated[int, typer.Option("--eval-dataset")] = 0,
+    eval_split: Annotated[str, typer.Option("--eval-split")] = "val",
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Train the corner heatmap model.
+
+    Predicts a single corner-ness map with four peaks rather than four named
+    channels: which corner is a8 cannot be read off a board's appearance, so
+    naming them is left to the geometry downstream.
+    """
+    from chesssight.train.corner_run import train as run_training
+    from chesssight.train.heatmap import HeatmapConfig
+
+    config = HeatmapConfig(
+        data_roots=[Path(root) for root in data],
+        output_dir=Path(out),
+        backbone=backbone,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=lr,
+        image_size=image_size,
+        sigma=sigma,
+        num_workers=workers,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+        augment=augment,
+        val_root=Path(val_data) if val_data else None,
+        eval_dataset=eval_dataset,
+        eval_split=eval_split,
+        limit=limit,
+    )
+    run_training(config, device=device)
+
+
+@train_app.command("grid")
+def train_grid(
+    data: Annotated[list[Path], typer.Argument(help="Run directories to train on.")],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Where to save.")],
+    backbone: Annotated[str, typer.Option("--backbone")] = "resnet34",
+    epochs: Annotated[int, typer.Option("--epochs", "-e")] = 20,
+    batch_size: Annotated[int, typer.Option("--batch-size", "-b")] = 32,
+    lr: Annotated[float, typer.Option("--lr")] = 3e-4,
+    image_size: Annotated[int, typer.Option("--image-size")] = 448,
+    corner_jitter: Annotated[
+        float,
+        typer.Option(
+            "--corner-jitter",
+            help="Corner noise during training, in squares. The model is "
+            "deployed behind a corner detector that lands about 0.2 squares "
+            "out; training on exact corners teaches it to trust more than it "
+            "will get.",
+        ),
+    ] = 0.25,
+    workers: Annotated[int, typer.Option("--workers", "-w")] = 8,
+    val_data: Annotated[Path | None, typer.Option("--val-data")] = None,
+    eval_split: Annotated[str, typer.Option("--eval-split")] = "val",
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Read all 64 squares at once from a rectified board.
+
+    Replaces detect-then-assign for the position: corners give the homography,
+    the board is warped to a canonical square, and one forward pass classifies
+    every square. No boxes, no NMS, no foot-point heuristic.
+    """
+    from chesssight.train.gridnet import GridConfig
+    from chesssight.train.gridnet_run import train as run_training
+
+    run_training(
+        GridConfig(
+            data_roots=[Path(root) for root in data],
+            output_dir=Path(out),
+            backbone=backbone,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=lr,
+            image_size=image_size,
+            corner_jitter=corner_jitter,
+            num_workers=workers,
+            val_root=Path(val_data) if val_data else None,
+            eval_split=eval_split,
+            limit=limit,
+        ),
+        device=device,
+    )
+
+
+@train_app.command("grid-evaluate")
+def train_grid_evaluate(
+    checkpoint: Annotated[Path, typer.Argument(help="Saved grid checkpoint.")],
+    data: Annotated[Path, typer.Option("--data", help="Run directory to score on.")],
+    split: Annotated[str, typer.Option("--split")] = "test",
+    corners: Annotated[
+        Path | None,
+        typer.Option(
+            "--corners",
+            help="Corner checkpoint supplying the geometry, as deployment "
+            "would. Without it the annotated corners are used, which measures "
+            "classification alone rather than the pipeline.",
+        ),
+    ] = None,
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Per-square and board-exact accuracy for the grid classifier."""
+    from chesssight.data.dataset import DatasetReader
+    from chesssight.train.engine import resolve_device
+    from chesssight.train.gridnet import load
+    from chesssight.train.gridnet_run import evaluate_samples, format_report
+
+    model, _ = load(Path(checkpoint))
+    resolved = resolve_device(device)
+    metrics = evaluate_samples(
+        model.to(resolved),
+        DatasetReader(Path(data)),
+        resolved,
+        split=split,
+        limit=limit,
+        corner_model=Path(corners) if corners else None,
+        progress=typer.echo,
+    )
+    typer.echo(format_report(metrics))
+
+
+@train_app.command("boxcorners")
+def train_boxcorners(
+    data: Annotated[list[Path], typer.Argument(help="Run directories to train on.")],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Where to save.")],
+    backbone: Annotated[
+        str,
+        typer.Option(
+            "--backbone",
+            help="Any timm classifier trunk. Unlike the heatmap this head pools "
+            "to a vector, so a plain ViT works here too.",
+        ),
+    ] = "resnet18",
+    epochs: Annotated[int, typer.Option("--epochs", "-e")] = 20,
+    batch_size: Annotated[int, typer.Option("--batch-size", "-b")] = 64,
+    lr: Annotated[float, typer.Option("--lr")] = 3e-4,
+    image_size: Annotated[int, typer.Option("--image-size")] = 224,
+    margin: Annotated[
+        float,
+        typer.Option(
+            "--margin",
+            help="How far past the board box the crop reaches. Corners of a "
+            "steeply-angled board sit outside their own box.",
+        ),
+    ] = 0.25,
+    workers: Annotated[int, typer.Option("--workers", "-w")] = 8,
+    val_data: Annotated[Path | None, typer.Option("--val-data")] = None,
+    eval_split: Annotated[str, typer.Option("--eval-split")] = "val",
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Train corner regression relative to the board box.
+
+    Predicts corners in units of the box rather than as image points, so a corner
+    outside the frame is an ordinary target instead of an impossible one. The
+    board box is found on essentially every frame where four corners are not.
+    """
+    from chesssight.train.boxcorner_run import train as run_training
+    from chesssight.train.boxcorners import BoxCornerConfig
+
+    run_training(
+        BoxCornerConfig(
+            data_roots=[Path(root) for root in data],
+            output_dir=Path(out),
+            backbone=backbone,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=lr,
+            image_size=image_size,
+            margin=margin,
+            num_workers=workers,
+            val_root=Path(val_data) if val_data else None,
+            eval_split=eval_split,
+            limit=limit,
+        ),
+        device=device,
+    )
+
+
+@train_app.command("boxcorners-evaluate")
+def train_boxcorners_evaluate(
+    checkpoint: Annotated[Path, typer.Argument(help="Saved box-corner checkpoint.")],
+    data: Annotated[Path, typer.Option("--data", help="Run directory to score on.")],
+    split: Annotated[str, typer.Option("--split")] = "test",
+    detector: Annotated[
+        Path | None,
+        typer.Option(
+            "--detector",
+            help="Detector checkpoint supplying the board box, as deployment "
+            "would. Without it the annotated box is used, which measures the "
+            "regressor alone and overstates the pipeline.",
+        ),
+    ] = None,
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Corner error for the box-relative regressor, in pixels and squares."""
+    from chesssight.data.dataset import DatasetReader
+    from chesssight.train.boxcorner_run import evaluate_samples, format_report
+    from chesssight.train.boxcorners import load
+    from chesssight.train.engine import resolve_device
+
+    model, config = load(Path(checkpoint))
+    resolved = resolve_device(device)
+    metrics = evaluate_samples(
+        model.to(resolved),
+        DatasetReader(Path(data)),
+        resolved,
+        split=split,
+        image_size=config.image_size,
+        margin=config.margin,
+        limit=limit,
+        detector=Path(detector) if detector else None,
+        progress=typer.echo,
+    )
+    typer.echo(format_report(metrics))
+
+
+@train_app.command("corners-gate")
+def train_corners_gate(
+    checkpoint: Annotated[Path, typer.Argument(help="Saved corner checkpoint.")],
+    data: Annotated[
+        Path, typer.Option("--data", help="Run directory whose val split fits it.")
+    ],
+    split: Annotated[str, typer.Option("--split")] = "val",
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Fit the confidence below which the model should refuse to report a board.
+
+    The decoder returns four peaks from any image, so without a threshold the
+    model cannot say "no board here" -- it hands back a quad fitted to noise and
+    everything downstream reads a position off it. Saved into the checkpoint and
+    applied by `corners-evaluate` automatically.
+    """
+    from chesssight.data.dataset import DatasetReader
+    from chesssight.train.corner_run import fit_gate
+    from chesssight.train.engine import resolve_device
+    from chesssight.train.heatmap import load
+
+    model, config = load(Path(checkpoint))
+    resolved = resolve_device(device)
+    gate = fit_gate(
+        model.to(resolved),
+        DatasetReader(Path(data)),
+        resolved,
+        split=split,
+        input_size=config.image_size,
+        stride=config.stride,
+        limit=limit,
+    )
+    path = gate.save(Path(checkpoint))
+    typer.echo(f"wrote {path}")
+    typer.echo(
+        f"  min peak score {gate.min_score:.3f} -> precision {gate.precision:.3f}  "
+        f"recall {gate.recall:.3f}  F1 {gate.f1:.3f}  ({gate.boards} boards)"
+    )
+    if gate.is_degenerate:
+        typer.echo(
+            "  WARNING: this gate refuses almost nothing. That is the right "
+            "answer for this split -- it contains too few failures to separate "
+            "-- but it will not protect a harder domain either. Fit it on data "
+            "that looks like deployment: cropped boards, unfamiliar sets, "
+            "grazing angles."
+        )
+
+
+@train_app.command("corners-evaluate")
+def train_corners_evaluate(
+    checkpoint: Annotated[Path, typer.Argument(help="Saved corner checkpoint.")],
+    data: Annotated[Path, typer.Option("--data", help="Run directory to score on.")],
+    split: Annotated[str, typer.Option("--split")] = "test",
+    min_score: Annotated[
+        float,
+        typer.Option(
+            "--min-score",
+            help="Peak confidence below which a corner does not count. At 0 the "
+            "decoder always returns its four best cells, so the found rate is "
+            "100% whether or not there is a board in the picture.",
+        ),
+    ] = 0.0,
+    limit: Annotated[int | None, typer.Option("--limit", "-n")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
+) -> None:
+    """Corner error on a dataset, in pixels and in squares.
+
+    Squares is the number worth quoting: pixel error alone says nothing without
+    knowing how large the board appeared.
+    """
+    from chesssight.data.dataset import DatasetReader
+    from chesssight.train.corner_run import evaluate_samples, format_report
+    from chesssight.train.heatmap import load
+
+    model, config = load(Path(checkpoint))
+    from chesssight.train.engine import resolve_device
+
+    resolved = resolve_device(device)
+    model = model.to(resolved)
+    metrics = evaluate_samples(
+        model,
+        DatasetReader(Path(data)),
+        resolved,
+        split=split,
+        input_size=config.image_size,
+        stride=config.stride,
+        limit=limit,
+        min_score=min_score,
+        progress=typer.echo,
+    )
+    typer.echo(format_report(metrics))
+
+
 @train_app.command("evaluate")
 def train_evaluate(
     checkpoint: Annotated[Path, typer.Argument(help="Saved checkpoint directory.")],
@@ -977,6 +1349,15 @@ def train_video(
             "and its box is damped. This is what removes flicker.",
         ),
     ] = True,
+    corners: Annotated[
+        bool,
+        typer.Option(
+            "--corners/--no-corners",
+            help="Turn corner detections into a board quad and draw the projected "
+            "grid and the position it reads. Inert on a checkpoint trained "
+            "without the corner class, which never emits one.",
+        ),
+    ] = True,
     max_pieces: Annotated[
         int,
         typer.Option(
@@ -990,8 +1371,9 @@ def train_video(
 ) -> None:
     """Run the detector over a video and write an annotated copy.
 
-    Shows detection only: boxes, classes and calibrated confidences. A per-square
-    position readout needs the board corners, which the detector does not emit.
+    Boxes, classes and calibrated confidences -- plus, on a corner-trained
+    checkpoint, the projected 8x8 grid and the position it reads. That position is
+    shown up to a rotation: four interchangeable corners cannot say which is a8.
     """
     from chesssight.train.video import annotate_video
 
@@ -1004,15 +1386,21 @@ def train_video(
         stride=max(1, stride),
         board_gate=board_gate,
         smooth=smooth,
+        corners=corners,
         max_pieces=max_pieces,
         max_seconds=max_seconds,
         device=device,
         progress=typer.echo,
     )
-    typer.echo(
+    message = (
         f"wrote {result['output']}: {result['frames']} frames at "
         f"{result['fps']:.1f} fps, mean {result['mean_pieces']:.1f} pieces/frame"
     )
+    if result["geometry_frames"]:
+        message += (
+            f", board geometry on {result['geometry_rate']:.0%} of detection frames"
+        )
+    typer.echo(message)
 
 
 @assets_app.command("textures")
