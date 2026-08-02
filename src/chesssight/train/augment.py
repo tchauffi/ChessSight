@@ -86,12 +86,15 @@ class AugmentConfig:
     image_size: int = 512
 
 
-def build_transform(config: AugmentConfig) -> v2.Transform:
-    """Compose the augmentation pipeline.
+def geometric_steps(config: AugmentConfig) -> list[v2.Transform]:
+    """Resize, roll and crop. Shared by every task's pipeline.
 
-    Geometry runs first so that photometric and sensor effects apply to the final
-    framing -- blurring before a crop would sharpen the result back up by
-    resampling, which is not what a real camera does.
+    Kept separate from the photometric half so that a second target type -- board
+    corners as keypoints rather than pieces as boxes -- reuses this geometry
+    instead of restating it. The rules here (crop *after* rotation, work at
+    roughly output resolution, no flips) are the ones that must not diverge
+    between tasks: they are about what a chessboard photograph can look like, not
+    about what the model predicts.
     """
     work = int(round(config.image_size * config.work_scale))
 
@@ -125,7 +128,12 @@ def build_transform(config: AugmentConfig) -> v2.Transform:
             antialias=True,
         )
     )
+    return steps
 
+
+def photometric_steps(config: AugmentConfig) -> list[v2.Transform]:
+    """Colour, blur, JPEG and sensor noise. Target-agnostic by construction."""
+    steps: list[v2.Transform] = []
     if config.photometric_probability > 0:
         steps.append(
             v2.RandomApply(
@@ -170,6 +178,17 @@ def build_transform(config: AugmentConfig) -> v2.Transform:
                 p=config.noise_probability,
             )
         )
+    return steps
+
+
+def build_transform(config: AugmentConfig) -> v2.Transform:
+    """Compose the detection pipeline: geometry, then photometry, then sanitising.
+
+    Geometry runs first so that photometric and sensor effects apply to the final
+    framing -- blurring before a crop would sharpen the result back up by
+    resampling, which is not what a real camera does.
+    """
+    steps = geometric_steps(config) + photometric_steps(config)
 
     # Geometric transforms push boxes out of frame and shrink others to slivers.
     # Sanitising afterwards is what keeps the targets honest.
@@ -223,4 +242,39 @@ def apply(
         v2.functional.to_pil_image(out["image"]),
         result,
         [int(value) for value in out["labels"].tolist()],
+    )
+
+
+def build_corner_transform(config: AugmentConfig) -> v2.Transform:
+    """The same pipeline for keypoint targets.
+
+    No clamping and no sanitising: a corner pushed out of frame by the crop is
+    *information*, not a defective label. Clamping it to the border would teach
+    the model that a corner sits wherever the image happens to end, which is the
+    one thing a corner detector must never learn. The caller drops out-of-frame
+    points instead, and knows it did.
+    """
+    return v2.Compose(geometric_steps(config) + photometric_steps(config))
+
+
+def apply_corners(
+    transform: v2.Transform, image: Image.Image, points: list[list[float]]
+) -> tuple[Image.Image, list[list[float]]]:
+    """Augment an image and its corner points together.
+
+    Points ride through as ``tv_tensors.KeyPoints`` so torchvision applies the
+    identical geometry to image and label -- the alternative, replaying the
+    sampled crop and rotation by hand, is exactly the kind of second
+    implementation that silently drifts from the first.
+    """
+    tensor = tv_tensors.Image(v2.functional.pil_to_tensor(image))
+    height, width = tensor.shape[-2:]
+    keypoints = tv_tensors.KeyPoints(
+        torch.tensor(points, dtype=torch.float32).reshape(-1, 2),
+        canvas_size=(height, width),
+    )
+    out = transform({"image": tensor, "keypoints": keypoints})
+    return (
+        v2.functional.to_pil_image(out["image"]),
+        [[float(x), float(y)] for x, y in out["keypoints"].tolist()],
     )
