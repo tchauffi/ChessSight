@@ -16,6 +16,21 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def corner_detections(points, score: float = 0.9) -> list[dict]:
+    """Four corner-class detections, as small boxes centred on ``points``."""
+    from chesssight.train.labels import CORNER_INDEX
+
+    return [
+        {
+            "label": CORNER_INDEX,
+            "name": "corner",
+            "score": score,
+            "box": [x - 4, y - 4, x + 4, y + 4],
+        }
+        for x, y in points
+    ]
+
+
 @pytest.fixture(scope="module")
 def tiny_clip(tmp_path_factory):
     """One second of test pattern, 64x48 at 10 fps."""
@@ -269,6 +284,40 @@ class TestSuppressionAndCap:
         ]
         kept, _, _ = gate_to_board(detections, None)
         assert sum(1 for d in kept if d["label"] == BOARD_INDEX) == 1
+
+
+class TestBoardTrackerSmoothing:
+    def test_no_smoothing_takes_the_current_frame_alone(self):
+        # With smoothing off a quad must not inherit anything from the frame
+        # before it: fed unrelated views -- a slideshow, a cut -- an averaged
+        # quad matches neither and lays its grid across the squares.
+        from chesssight.train.video import BoardTracker
+
+        tracker = BoardTracker(smoothing=0.0, memory=0)
+        first = corner_detections([[10, 10], [90, 10], [90, 90], [10, 90]])
+        second = corner_detections([[50, 50], [150, 50], [150, 150], [50, 150]])
+        tracker.update(first)
+        quad = tracker.update(second)
+        assert quad is not None
+        assert min(x for x, _ in quad) >= 49  # nothing left of the new view
+
+    def test_no_memory_forgets_immediately(self):
+        from chesssight.train.video import BoardTracker
+
+        tracker = BoardTracker(smoothing=0.0, memory=0)
+        tracker.update(corner_detections([[10, 10], [90, 10], [90, 90], [10, 90]]))
+        assert tracker.update([]) is None
+
+    def test_smoothing_on_still_damps(self):
+        from chesssight.train.video import BoardTracker
+
+        tracker = BoardTracker(smoothing=0.8, memory=12)
+        tracker.update(corner_detections([[10, 10], [90, 10], [90, 90], [10, 90]]))
+        quad = tracker.update(
+            corner_detections([[50, 50], [150, 50], [150, 150], [50, 150]])
+        )
+        assert quad is not None
+        assert min(x for x, _ in quad) < 49  # held back towards the old view
 
 
 class TestPieceTracker:

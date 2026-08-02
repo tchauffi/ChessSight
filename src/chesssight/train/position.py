@@ -5,11 +5,16 @@ say whether the board was *read*, and those are different questions -- a detecto
 score well while putting a bishop one square left of where it stands, which is a
 perfect box and a wrong position.
 
-Orientation is not resolved here. Four interchangeable corners give the board's
-geometry up to a rotation, and deciding which corner is a8 needs a separate cue (which
-end the white pieces are at, a clock, a player). Accuracy is therefore reported over
-the best of the four rotations, and that caveat is stated rather than hidden: it is an
-upper bound on what a full pipeline would score, not the pipeline's score.
+Orientation is not resolved *here*. Four interchangeable corners give the board's
+geometry up to a rotation, and deciding which corner is a8 needs a separate cue.
+:mod:`chesssight.train.orientation` supplies one -- square colour narrows the four
+candidates to two, and where White's men are settles the rest -- and measures 99% on
+ChessReD, 92% on legal synthetic positions.
+
+:func:`best_rotation` below therefore remains an *upper* bound and should be labelled
+as one, but it is no longer the only number available: a pipeline that calls
+:func:`chesssight.train.orientation.orient_position` gets a single committed answer
+and can be scored honestly against it.
 """
 
 from __future__ import annotations
