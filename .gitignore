@@ -195,3 +195,11 @@ assets/**/*.dae
 *.mp4
 *.webm
 *.mov
+
+test_images/
+
+# Overlays drawn on the photographs in test_images/. The source photographs are
+# private, and a sheet with the board outlined on top of one is still that
+# photograph -- ignoring the inputs and committing the renders would put them in
+# the history anyway.
+results/photos_*.png
