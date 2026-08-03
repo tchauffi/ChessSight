@@ -55,9 +55,7 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
         head_prior=config.head_prior,
         focal_alpha=config.focal_alpha,
         focal_gamma=config.focal_gamma,
-    ).to(
-        resolved
-    )
+    ).to(resolved)
     train_loader, val_loader = build_loaders(config, processor)
 
     # Validation scores detections the same way the reported result does. The

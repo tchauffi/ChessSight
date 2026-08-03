@@ -157,7 +157,9 @@ def _convert_fp16(path: Path) -> None:
             ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
             return
         except Exception as error:  # noqa: BLE001 - ort raises its own Fail type
-            found = re.search(r"node \((.*?)\) does not match expected type", str(error))
+            found = re.search(
+                r"node \((.*?)\) does not match expected type", str(error)
+            )
             if not found:
                 raise
             model = onnx.load(path)
