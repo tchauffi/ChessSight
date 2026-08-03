@@ -49,7 +49,13 @@ def train(config: TrainConfig, device: str | None = None) -> dict:
     print(f"[chesssight] model {config.model_name} on {resolved}", flush=True)
 
     processor = build_processor(config.model_name, config.image_size)
-    model = build_model(config.model_name, cls_loss_weight=config.cls_loss_weight).to(
+    model = build_model(
+        config.model_name,
+        cls_loss_weight=config.cls_loss_weight,
+        head_prior=config.head_prior,
+        focal_alpha=config.focal_alpha,
+        focal_gamma=config.focal_gamma,
+    ).to(
         resolved
     )
     train_loader, val_loader = build_loaders(config, processor)
