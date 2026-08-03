@@ -158,11 +158,20 @@ def onnx_export(
         Path, typer.Option("--corners", help="Corner heatmap checkpoint directory.")
     ],
     out: Annotated[Path, typer.Option("--out", "-o", help="Bundle directory.")],
+    fp16: Annotated[
+        bool,
+        typer.Option(
+            "--fp16/--no-fp16",
+            help="Store weights as float16 (io stays float32): half the bundle, "
+            "measured identical to torch on ChessReD test, and what docs/models "
+            "ships. uint8 weight quantisation measured 8 points worse — don't.",
+        ),
+    ] = False,
 ) -> None:
     """Write both models to ONNX, with the metadata needed to run them."""
     from chesssight.inference.onnx import export
 
-    export(detector, corners, out)
+    export(detector, corners, out, fp16=fp16)
     for file in sorted(out.iterdir()):
         typer.echo(f"  {file.name:16} {file.stat().st_size / 1e6:8.1f} MB")
 
@@ -853,6 +862,30 @@ def train_detr(
             "score everything under 0.1. Try 3.0.",
         ),
     ] = None,
+    head_prior: Annotated[
+        float | None,
+        typer.Option(
+            "--head-prior",
+            help="Initialise a fresh classification head to predict this prior "
+            "probability per class (the focal-loss bias trick) instead of the "
+            "reinit's p=0.5, which is what compresses a short fine-tune's "
+            "scores. 0 disables; ignored when warm-starting a matching head.",
+        ),
+    ] = 0.01,
+    focal_alpha: Annotated[
+        float | None,
+        typer.Option(
+            "--focal-alpha",
+            help="Override RT-DETR's varifocal alpha. Stock value when omitted.",
+        ),
+    ] = None,
+    focal_gamma: Annotated[
+        float | None,
+        typer.Option(
+            "--focal-gamma",
+            help="Override RT-DETR's varifocal gamma. Stock value when omitted.",
+        ),
+    ] = None,
     augment: Annotated[
         bool,
         typer.Option(
@@ -891,6 +924,9 @@ def train_detr(
         eval_split=eval_split,
         select_metric=select_metric,
         cls_loss_weight=cls_weight,
+        head_prior=None if head_prior in (None, 0) else head_prior,
+        focal_alpha=focal_alpha,
+        focal_gamma=focal_gamma,
         augment=augment,
         corners=corners,
         ema=ema,

@@ -115,6 +115,9 @@ for (const item of cases) {
   if (Math.abs(vote.pieces - expected.pieces) > SCORE_TOLERANCE) {
     fail(id, "piece score", `js=${vote.pieces} py=${expected.pieces}`);
   }
+  if (Math.abs(vote.pawns - expected.pawns) > SCORE_TOLERANCE) {
+    fail(id, "pawn penalty", `js=${vote.pawns} py=${expected.pawns}`);
+  }
 
   // 5. the scores on their own, so a failure above localises
   const cs = colourScore(expected.luminance);

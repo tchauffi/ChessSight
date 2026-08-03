@@ -84,6 +84,19 @@ class TrainConfig:
     #: gets most of the gradient and the class logits never grow. None keeps the
     #: stock weight.
     cls_loss_weight: float | None = None
+    #: Initialise every classification-head bias so a fresh head predicts this
+    #: probability for each class, the standard focal/varifocal prior init. The
+    #: HF reinit leaves the bias at zero -- p=0.5 for all 14 classes on all 300
+    #: queries -- so the first epochs are spent hammering logits down, and a
+    #: short fine-tune ends with every score compressed under ~0.1. None keeps
+    #: the zero bias. Only applies when the head really is fresh; warm-starting
+    #: from an existing ChessSight checkpoint keeps its trained bias.
+    head_prior: float | None = 0.01
+    #: RT-DETR's varifocal alpha/gamma. None keeps the stock values; exposed so
+    #: an experiment can react if the prior init alone does not decompress the
+    #: scores.
+    focal_alpha: float | None = None
+    focal_gamma: float | None = None
     #: Keep an exponential moving average of the weights and evaluate/save *that*,
     #: as the reference RT-DETR training does. The averaged model is what smooths
     #: out the step-to-step noise of a small-batch fine-tune; the official recipe
@@ -111,17 +124,28 @@ def resolve_device(explicit: str | None = None) -> torch.device:
 
 
 def build_model(
-    model_name: str = DEFAULT_MODEL, *, cls_loss_weight: float | None = None
+    model_name: str = DEFAULT_MODEL,
+    *,
+    cls_loss_weight: float | None = None,
+    head_prior: float | None = 0.01,
+    focal_alpha: float | None = None,
+    focal_gamma: float | None = None,
 ):
     """Load a pretrained detector and swap in a ChessSight head.
 
     ``ignore_mismatched_sizes`` is what allows the COCO 80-class head to be
     replaced; without it the load fails rather than reinitialising.
     """
+    from transformers import AutoConfig
+
     overrides = {}
     if cls_loss_weight is not None:
         overrides["weight_loss_vfl"] = cls_loss_weight
-    return AutoModelForObjectDetection.from_pretrained(
+    if focal_alpha is not None:
+        overrides["focal_loss_alpha"] = focal_alpha
+    if focal_gamma is not None:
+        overrides["focal_loss_gamma"] = focal_gamma
+    model = AutoModelForObjectDetection.from_pretrained(
         model_name,
         num_labels=NUM_DETECTION_LABELS,
         id2label=ID2LABEL,
@@ -129,6 +153,33 @@ def build_model(
         ignore_mismatched_sizes=True,
         **overrides,
     )
+    # The prior init belongs to a *fresh* head. Warm-starting from a checkpoint
+    # whose label count already matches keeps the trained bias untouched.
+    source_labels = AutoConfig.from_pretrained(model_name).num_labels
+    if head_prior is not None and source_labels != NUM_DETECTION_LABELS:
+        init_head_prior(model, head_prior)
+    return model
+
+
+def init_head_prior(model, prior: float) -> None:
+    """Bias every classification head so a fresh model predicts ``prior``.
+
+    The RetinaNet trick, and what RT-DETR's reference implementation does too:
+    with 300 queries and 14 classes almost every logit's target is 0, so a
+    head that starts at p=0.5 spends its first epochs being hammered down
+    instead of learning. RT-DETR carries several such heads -- one
+    ``class_embed`` per decoder layer plus the encoder's ``enc_score_head`` --
+    hence matching by shape and name rather than one attribute path.
+    """
+    value = -math.log((1.0 - prior) / prior)
+    for name, module in model.named_modules():
+        if (
+            isinstance(module, torch.nn.Linear)
+            and module.out_features == NUM_DETECTION_LABELS
+            and ("class_embed" in name or "score_head" in name)
+            and module.bias is not None
+        ):
+            torch.nn.init.constant_(module.bias, value)
 
 
 def build_processor(model_name: str = DEFAULT_MODEL, image_size: int = 640):

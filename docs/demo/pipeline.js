@@ -340,22 +340,57 @@ export function pieceScore(grid) {
 }
 
 /**
+ * Net fraction of pawns standing on their own half of the board, in [-1, 1].
+ * No vote (0) unless both colours still have a pawn — a lone runner is exactly
+ * the pawn whose position lies about the orientation.
+ */
+export function pawnHomeScore(grid) {
+  let own = 0;
+  let total = 0;
+  let seenWhite = false;
+  let seenBlack = false;
+  for (let rank = 0; rank < 8; rank += 1) {
+    for (let file = 0; file < 8; file += 1) {
+      const occupant = grid[rank][file];
+      if (occupant === 1) {
+        seenWhite = true;
+        total += 1;
+        if (rank >= 4) own += 1;
+      } else if (occupant === 7) {
+        seenBlack = true;
+        total += 1;
+        if (rank < 4) own += 1;
+      }
+    }
+  }
+  if (!seenWhite || !seenBlack) return 0;
+  return (2 * own - total) / total;
+}
+
+/**
  * Quarter-turns that put a8 at grid[0][0]. Colour acts as a filter rather than
  * a term in a sum: letting a confident piece vote outweigh it would allow an
- * answer that puts a dark square on a8, which is not a board.
+ * answer that puts a dark square on a8, which is not a board. Among the
+ * survivors, pawns standing on their own half break the 180-degree tie better
+ * than the material split, which wrongly assumes White sits nearer the camera.
  */
 export function orient(grid, luminance) {
   const candidates = [];
   for (let turns = 0; turns < 4; turns += 1) {
+    const rotated = rotate(grid, turns);
+    const pieces = pieceScore(rotated);
+    const pawns = pawnHomeScore(rotated);
     candidates.push({
       turns,
       colour: colourScore(rotate(luminance, turns)),
-      pieces: pieceScore(rotate(grid, turns)),
+      pieces,
+      pawns,
+      score: pieces + C.pawnHomeWeight * pawns,
     });
   }
   const bestColour = Math.max(...candidates.map((c) => c.colour));
   const surviving = candidates.filter((c) => c.colour >= bestColour - C.minColourMargin);
-  return surviving.reduce((a, b) => (b.pieces > a.pieces ? b : a));
+  return surviving.reduce((a, b) => (b.score > a.score ? b : a));
 }
 
 // ---------------------------------------------------------------------- FEN
@@ -411,7 +446,7 @@ export function readPosition({ heatmap, heatSize, logits, boxes, queries, classe
   const homography = boardToImage(quad);
   let grid = gridFrom(detections, homography);
   const luminance = squareLuminance(grey, width, height, homography);
-  const { turns, colour, pieces } = orient(grid, luminance);
+  const { turns, colour, pieces, pawns } = orient(grid, luminance);
   grid = rotate(grid, turns);
   quad = [...quad.slice(turns), ...quad.slice(0, turns)];
 
@@ -421,6 +456,6 @@ export function readPosition({ heatmap, heatSize, logits, boxes, queries, classe
     quad,
     detections,
     fen: gridToFen(grid),
-    evidence: { colour, pieces },
+    evidence: { colour, pieces, pawns },
   };
 }

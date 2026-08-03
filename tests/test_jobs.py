@@ -593,3 +593,26 @@ class TestHdriLighting:
         lighting = randomize.resolve_lighting(config, derive_rng(0, "lighting"))
         assert lighting.hdri_path is None
         assert lighting.sun_energy > 0.0
+
+
+def test_build_sampler_adds_the_opening_component():
+    from pathlib import Path
+
+    from chesssight.synth.jobs import build_sampler
+    from chesssight.synth.positions import MixtureSampler
+
+    fixture = Path(__file__).parent / "fixtures" / "sample.pgn"
+    config = make_config(
+        positions={
+            "pgn_paths": [str(fixture)],
+            "weight_pgn": 0.55,
+            "weight_random": 0.3,
+            "weight_pgn_opening": 0.15,
+            "opening_skip_plies": 0,
+            "opening_max_plies": 8,
+        }
+    )
+    sampler = build_sampler(config)
+    assert isinstance(sampler, MixtureSampler)
+    assert len(sampler.samplers) == 3
+    assert sampler.weights == [0.55, 0.15, 0.3]

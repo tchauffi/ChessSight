@@ -2,41 +2,41 @@
  "photographs": 306,
  "split": "test",
  "located": 306,
- "squares": 0.9924938725490197,
- "exact": 0.6830065359477124,
+ "squares": 0.9931576797385621,
+ "exact": 0.7124183006535948,
  "within_one": 0.9183006535947712,
- "within_three": 0.9901960784313726,
- "occupied_named": 0.982681919288211,
- "wrong_squares": 147,
+ "within_three": 0.9967320261437909,
+ "occupied_named": 0.984588496981252,
+ "wrong_squares": 134,
  "kinds": {
-  "missed": 33,
-  "spurious": 38,
-  "misnamed": 76
+  "missed": 16,
+  "spurious": 37,
+  "misnamed": 81
  },
  "histogram": [
   {
    "wrong": 0,
-   "count": 209
+   "count": 218
   },
   {
    "wrong": 1,
-   "count": 72
+   "count": 63
   },
   {
    "wrong": 2,
-   "count": 16
+   "count": 17
   },
   {
    "wrong": 3,
-   "count": 6
+   "count": 7
   },
   {
    "wrong": 4,
-   "count": 1
+   "count": 0
   },
   {
    "wrong": 5,
-   "count": 1
+   "count": 0
   },
   {
    "wrong": 6,
@@ -47,55 +47,55 @@
  "examples": [
   {
    "id": "chessred_000010",
-   "verdict": "good",
-   "title": "A clean read",
-   "text": "Thirty-two pieces on a glossy vinyl board, seen at an angle. All 64 squares correct, on pieces as small as 25 pixels tall at the resolution the detector works in. It emitted 37 boxes here &mdash; the five that fall outside the predicted outline never reach the grid.",
-   "expect_wrong": 0,
+   "verdict": "near",
+   "title": "Two squares, one royal swap",
+   "text": "Thirty-two pieces on a glossy vinyl board, seen at an angle. Sixty-two squares are right; the two that are not are d8 and e8, where the black queen and king &mdash; standing shoulder to shoulder &mdash; are read as each other. Naming the two tallest pieces apart on a crowded back rank is what remains of this problem.",
+   "expect_wrong": 2,
    "photo": "assets/ex000010-photo.jpg",
    "found": "assets/ex000010-found.jpg",
    "read": "assets/ex000010-read.svg",
-   "truth": null,
-   "fen": "r2qkb1r/pppn1ppp/4pn2/3p1b2/1P6/P3PN2/1BPP1PPP/RN1QKB1R",
-   "wrong": [],
-   "wrong_count": 0,
-   "boxes": 42
+   "truth": "assets/ex000010-truth.svg",
+   "fen": "r2kqb1r/pppn1ppp/4pn2/3p1b2/1P6/P3PN2/1BPP1PPP/RN1QKB1R",
+   "wrong": [
+    "d8",
+    "e8"
+   ],
+   "wrong_count": 2,
+   "boxes": 37
   },
   {
    "id": "chessred_000002",
-   "verdict": "near",
-   "title": "One square, and it is a naming error",
-   "text": "The opening position after 1.b4 d5. Every piece is found, including the knight on b1 half hidden behind the rook &mdash; but from this angle it is called a rook too. That is the shape of almost every remaining error: the piece is seen, and then named wrongly.",
-   "expect_wrong": 1,
+   "verdict": "good",
+   "title": "A clean read",
+   "text": "The opening position after 1.b4 d5. All 64 squares correct, including the knight on b1 half hidden behind its rook &mdash; the square the previous model misnamed from this angle. Every piece found, every piece named.",
+   "expect_wrong": 0,
    "photo": "assets/ex000002-photo.jpg",
    "found": "assets/ex000002-found.jpg",
    "read": "assets/ex000002-read.svg",
-   "truth": "assets/ex000002-truth.svg",
-   "fen": "rnbqkbnr/ppp1pppp/8/3p4/1P6/8/P1PPPPPP/RRBQKBNR",
-   "wrong": [
-    "b1"
-   ],
-   "wrong_count": 1,
-   "boxes": 36
+   "truth": null,
+   "fen": "rnbqkbnr/ppp1pppp/8/3p4/1P6/8/P1PPPPPP/RNBQKBNR",
+   "wrong": [],
+   "wrong_count": 0,
+   "boxes": 49
   },
   {
    "id": "chessred_000001",
    "verdict": "bad",
    "title": "The back rank, where the tall pieces stand together",
-   "text": "Four wrong squares, all on the first rank: the queen on d1 is called a king, the bishop on f1 a queen, and the king and knight beside them are lost behind their neighbours. A crowded back rank seen from low down is the hardest thing on the board &mdash; queen-for-king is the single most common mistake in the whole split.",
-   "expect_wrong": 4,
+   "text": "Three wrong squares, all on the first rank: the queen on d1 is called a king, the king on e1 shrinks to a pawn behind its neighbours, and the bishop on f1 becomes a rook. A crowded back rank seen from low down is the hardest thing on the board &mdash; queen-for-king is still the most common mistake in the whole split, though one square fewer goes wrong here than before.",
+   "expect_wrong": 3,
    "photo": "assets/ex000001-photo.jpg",
    "found": "assets/ex000001-found.jpg",
    "read": "assets/ex000001-read.svg",
    "truth": "assets/ex000001-truth.svg",
-   "fen": "rnbqkbnr/pppppppp/8/8/1P6/8/P1PPPPPP/RNBK1Q1R",
+   "fen": "rnbqkbnr/pppppppp/8/8/1P6/8/P1PPPPPP/RNBKPRNR",
    "wrong": [
     "d1",
     "e1",
-    "f1",
-    "g1"
+    "f1"
    ],
-   "wrong_count": 4,
-   "boxes": 36
+   "wrong_count": 3,
+   "boxes": 53
   },
   {
    "id": "chessred_000101",
@@ -127,7 +127,7 @@
     "h1"
    ],
    "wrong_count": 16,
-   "boxes": 33
+   "boxes": 59
   }
  ],
  "synth": [

@@ -48,10 +48,18 @@ META_FILE = "meta.json"
 # --------------------------------------------------------------------------
 # export
 # --------------------------------------------------------------------------
-def export(detector: Path, corners: Path, out: Path) -> Path:
+def export(detector: Path, corners: Path, out: Path, *, fp16: bool = False) -> Path:
     """Write both graphs and the metadata needed to run them, into ``out``.
 
     Needs torch; running the result does not.
+
+    ``fp16`` halves the graphs by storing weights as float16 (inputs and
+    outputs stay float32). This is what the checked-in browser bundle uses:
+    the fp32 detector graph is over GitHub's 100 MB per-file limit, and of the
+    smaller formats fp16 is the only one that measured *identical* to torch on
+    the ChessReD test split (71.24% boards exact either way). uint8 weight
+    quantisation — which an earlier bundle shipped — measured 63.07% on the
+    same split and must not come back.
     """
     import torch
 
@@ -119,7 +127,53 @@ def export(detector: Path, corners: Path, out: Path) -> Path:
         ),
     }
     (out / META_FILE).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+    if fp16:
+        for file in (DETECTOR_FILE, CORNERS_FILE):
+            _convert_fp16(out / file)
     return out
+
+
+def _convert_fp16(path: Path) -> None:
+    """Store a graph's weights as float16, keeping float32 inputs and outputs.
+
+    The converter occasionally leaves a pre-existing Cast node declaring the
+    dtype its edge had *before* conversion; onnxruntime names the offending
+    node when it refuses to load, so the mismatch is repaired by flipping that
+    node's ``to`` attribute and retrying until the session opens.
+    """
+    import re
+
+    import onnx
+    import onnxruntime as ort
+    from onnx import TensorProto
+    from onnxconverter_common import float16
+
+    model = onnx.load(path)
+    onnx.save(float16.convert_float_to_float16(model, keep_io_types=True), path)
+
+    for _ in range(20):
+        try:
+            ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+            return
+        except Exception as error:  # noqa: BLE001 - ort raises its own Fail type
+            found = re.search(
+                r"node \((.*?)\) does not match expected type", str(error)
+            )
+            if not found:
+                raise
+            model = onnx.load(path)
+            for node in model.graph.node:
+                if node.name == found.group(1) and node.op_type == "Cast":
+                    for attribute in node.attribute:
+                        if attribute.name == "to":
+                            attribute.i = (
+                                TensorProto.FLOAT16
+                                if attribute.i == TensorProto.FLOAT
+                                else TensorProto.FLOAT
+                            )
+            onnx.save(model, path)
+    raise RuntimeError(f"{path}: fp16 graph still does not load after 20 patches")
 
 
 # --------------------------------------------------------------------------

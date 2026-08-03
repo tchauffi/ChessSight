@@ -46,43 +46,43 @@ SYNTH_IDS = ("000000", "000004", "000011", "000023", "000042", "000057")
 EXAMPLES: tuple[dict[str, Any], ...] = (
     {
         "id": "chessred_000010",
-        "verdict": "good",
-        "title": "A clean read",
+        "verdict": "near",
+        "title": "Two squares, one royal swap",
         "text": (
-            "Thirty-two pieces on a glossy vinyl board, seen at an angle. All "
-            "64 squares correct, on pieces as small as 25 pixels tall at the "
-            "resolution the detector works in. It emitted 37 boxes here &mdash; "
-            "the five that fall outside the predicted outline never reach the "
-            "grid."
+            "Thirty-two pieces on a glossy vinyl board, seen at an angle. "
+            "Sixty-two squares are right; the two that are not are d8 and e8, "
+            "where the black queen and king &mdash; standing shoulder to "
+            "shoulder &mdash; are read as each other. Naming the two tallest "
+            "pieces apart on a crowded back rank is what remains of this "
+            "problem."
         ),
-        "expect_wrong": 0,
+        "expect_wrong": 2,
     },
     {
         "id": "chessred_000002",
-        "verdict": "near",
-        "title": "One square, and it is a naming error",
+        "verdict": "good",
+        "title": "A clean read",
         "text": (
-            "The opening position after 1.b4 d5. Every piece is found, "
-            "including the knight on b1 half hidden behind the rook &mdash; "
-            "but from this angle it is called a rook too. That is the shape of "
-            "almost every remaining error: the piece is seen, and then named "
-            "wrongly."
+            "The opening position after 1.b4 d5. All 64 squares correct, "
+            "including the knight on b1 half hidden behind its rook &mdash; the "
+            "square the previous model misnamed from this angle. Every piece "
+            "found, every piece named."
         ),
-        "expect_wrong": 1,
+        "expect_wrong": 0,
     },
     {
         "id": "chessred_000001",
         "verdict": "bad",
         "title": "The back rank, where the tall pieces stand together",
         "text": (
-            "Four wrong squares, all on the first rank: the queen on d1 is "
-            "called a king, the bishop on f1 a queen, and the king and knight "
-            "beside them are lost behind their neighbours. A crowded back rank "
-            "seen from low down is the hardest thing on the board &mdash; "
-            "queen-for-king is the single most common mistake in the whole "
-            "split."
+            "Three wrong squares, all on the first rank: the queen on d1 is "
+            "called a king, the king on e1 shrinks to a pawn behind its "
+            "neighbours, and the bishop on f1 becomes a rook. A crowded back "
+            "rank seen from low down is the hardest thing on the board &mdash; "
+            "queen-for-king is still the most common mistake in the whole "
+            "split, though one square fewer goes wrong here than before."
         ),
-        "expect_wrong": 4,
+        "expect_wrong": 3,
     },
     {
         "id": "chessred_000101",
@@ -184,12 +184,16 @@ def refresh(detector: Path, corners: Path, data_root: Path, split: str) -> None:
         "synth": [f"assets/synth-{n}.jpg" for n in range(1, len(SYNTH_IDS) + 1)],
     }
 
-    for example in payload["examples"]:
-        if example["wrong_count"] != example["expect_wrong"]:
-            raise SystemExit(
-                f"{example['id']}: prose claims {example['expect_wrong']} wrong "
-                f"squares, measured {example['wrong_count']}. Update the text."
-            )
+    mismatches = [
+        f"{example['id']}: prose claims {example['expect_wrong']} wrong "
+        f"squares, measured {example['wrong_count']}."
+        for example in payload["examples"]
+        if example["wrong_count"] != example["expect_wrong"]
+    ]
+    if mismatches:
+        # All of them at once: fixing the prose one 5-minute re-measurement at
+        # a time is how a checkpoint swap turns into an afternoon.
+        raise SystemExit("Update the text.\n" + "\n".join(mismatches))
 
     DATA.write_text(json.dumps(payload, indent=1), encoding="utf-8")
     print(f"wrote {DATA.relative_to(ROOT)}")
@@ -310,7 +314,11 @@ def write_constants(detector: Path | None = None) -> None:
     from chesssight.data.geometry import BOARD_CORNERS
     from chesssight.inference.onnx import CORNER_MEAN, CORNER_STD
     from chesssight.train.labels import BOARD_INDEX, CORNER_INDEX, DETECTION_LABELS
-    from chesssight.train.orientation import MIN_COLOUR_MARGIN, SAMPLE_FRACTION
+    from chesssight.train.orientation import (
+        MIN_COLOUR_MARGIN,
+        PAWN_HOME_WEIGHT,
+        SAMPLE_FRACTION,
+    )
     from chesssight.train.position import FOOT_X, FOOT_Y, POSITION_THRESHOLD
 
     calibration = None
@@ -343,6 +351,7 @@ def write_constants(detector: Path | None = None) -> None:
         "footY": FOOT_Y,
         "sampleFraction": SAMPLE_FRACTION,
         "minColourMargin": MIN_COLOUR_MARGIN,
+        "pawnHomeWeight": PAWN_HOME_WEIGHT,
         "boardCorners": [list(point) for point in BOARD_CORNERS],
         "cornerMean": CORNER_MEAN.tolist(),
         "cornerStd": CORNER_STD.tolist(),

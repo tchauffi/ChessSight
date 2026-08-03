@@ -259,3 +259,34 @@ class TestResolvedIntoTheSpec:
         # Absent without a texture directory, which is the default.
         assert pieces.light_maps is None
         assert pieces.dark_maps is None
+
+
+class TestIdentityPackPlumbing:
+    """The piece-identity fields must survive config -> resolved-spec intact,
+    because the Blender side only ever sees the spec dict."""
+
+    def test_defaults_are_a_no_op(self):
+        from chesssight.data.fen import STARTING_FEN, fen_to_grid
+
+        pieces = resolve_pieces(config(), fen_to_grid(STARTING_FEN), random.Random(0))
+        assert pieces.queen_coronet is False
+        assert pieces.rook_merlon_range == (4, 6)
+        assert set(pieces.letter_height_scales) == set("PNBRQK")
+        assert all(v == 1.0 for v in pieces.letter_height_scales.values())
+
+    def test_configured_values_flow_through(self):
+        from chesssight.data.fen import STARTING_FEN, fen_to_grid
+
+        cfg = config(
+            pieces={
+                "queen_coronet": True,
+                "rook_merlons": {"min": 3, "max": 8},
+                "letter_height_jitter": {"min": 0.94, "max": 1.06},
+            }
+        )
+        pieces = resolve_pieces(cfg, fen_to_grid(STARTING_FEN), random.Random(0))
+        assert pieces.queen_coronet is True
+        assert pieces.rook_merlon_range == (3, 8)
+        assert all(0.94 <= v <= 1.06 for v in pieces.letter_height_scales.values())
+        # Six independent draws, not one shared factor.
+        assert len(set(pieces.letter_height_scales.values())) > 1

@@ -694,6 +694,15 @@ def resolve_pieces(
         taper=pieces.taper.sample(rng),
         bevel_width=pieces.bevel_width.sample(rng),
         lathe_segments=pieces.lathe_segments.sample(rng),
+        queen_coronet=pieces.queen_coronet,
+        rook_merlon_range=(pieces.rook_merlons.min, pieces.rook_merlons.max),
+        # Sampled unconditionally -- a no-op range still consumes the same six
+        # draws, so enabling the jitter in one arm of an A/B does not shift
+        # every later draw of the other arm's scenes.
+        letter_height_scales={
+            letter: pieces.letter_height_jitter.sample(rng)
+            for letter in profiles.PIECE_LETTERS
+        },
         white_color=white_color,
         black_color=black_color,
         roughness=pieces.roughness.sample(rng),

@@ -40,6 +40,9 @@ class PieceStyle:
         taper: float = 0.0,
         bevel_width: float = 0.006,
         lathe_segments: int = 32,
+        queen_coronet: bool = False,
+        rook_merlon_range: tuple[int, int] | None = None,
+        letter_height_scales: dict[str, float] | None = None,
     ) -> None:
         self.square_size = square_size
         self.height_scale = height_scale
@@ -47,9 +50,13 @@ class PieceStyle:
         self.taper = taper
         self.bevel_width = bevel_width
         self.lathe_segments = lathe_segments
+        self.queen_coronet = queen_coronet
+        self.rook_merlon_range = rook_merlon_range or profiles.ROOK_CRENELLATIONS
+        self.letter_height_scales = letter_height_scales or {}
 
     @classmethod
     def from_spec(cls, spec: dict, square_size: float) -> PieceStyle:
+        merlons = spec.get("rook_merlon_range")
         return cls(
             square_size=square_size,
             height_scale=spec["height_scale"],
@@ -57,11 +64,24 @@ class PieceStyle:
             taper=spec.get("taper", 0.0),
             bevel_width=spec["bevel_width"],
             lathe_segments=spec["lathe_segments"],
+            queen_coronet=spec.get("queen_coronet", False),
+            rook_merlon_range=tuple(merlons) if merlons else None,
+            letter_height_scales=spec.get("letter_height_scales") or {},
         )
+
+    def height_scale_for(self, letter: str) -> float:
+        """The scene's height scale times this letter's own jitter.
+
+        The per-letter factor is what keeps the king/queen height gap from
+        being a constant the detector can memorise in place of the silhouette.
+        """
+        return self.height_scale * self.letter_height_scales.get(letter, 1.0)
 
     def height(self, letter: str) -> float:
         return profiles.piece_height(
-            letter, square_size=self.square_size, height_scale=self.height_scale
+            letter,
+            square_size=self.square_size,
+            height_scale=self.height_scale_for(letter),
         )
 
     def top_radius_scale(self, letter: str) -> float:
@@ -203,7 +223,7 @@ def _add_rook_crenellations(
     mid_radius = (outer + inner) / 2.0
     thickness = outer - inner
 
-    count = rng.randint(*profiles.ROOK_CRENELLATIONS)
+    count = rng.randint(*style.rook_merlon_range)
     # Merlon and gap alternate evenly around the rim.
     width = math.pi * mid_radius / count
 
@@ -218,6 +238,45 @@ def _add_rook_crenellations(
                     mid_radius * math.cos(angle),
                     mid_radius * math.sin(angle),
                     rim_z + merlon_height / 2.0,
+                ),
+                rotation_z=angle,
+            )
+        )
+    bl_utils.join(obj, blocks)
+
+
+def _add_queen_coronet(
+    obj: bpy.types.Object, style: PieceStyle, rng: random.Random
+) -> None:
+    """A ring of points encircling the queen's crown.
+
+    Sized like the rook's merlons -- off the top-of-lathe radius scale -- and
+    standing at a ring radius that clears the crown's own silhouette across the
+    taper range, so the points read as part of the crown rather than floating
+    beside it. Without this the procedural queen is a pure lathe whose outline
+    is the king's minus the cross.
+    """
+    scale = style.square_size * style.top_radius_scale("Q")
+    height = style.height("Q")
+    z_low, z_high = (fraction * height for fraction in profiles.QUEEN_CORONET_BAND)
+    ring = profiles.QUEEN_CORONET_RADIUS * scale
+    thickness = profiles.QUEEN_CORONET_THICKNESS * scale
+
+    count = rng.randint(*profiles.QUEEN_CORONET_POINTS)
+    # Narrower than the merlons' 50% duty: points, not battlements.
+    width = math.pi * ring / count * 0.6
+
+    blocks = []
+    for index in range(count):
+        angle = math.tau * index / count
+        blocks.append(
+            _box(
+                f"Coronet{index}",
+                (thickness, width, z_high - z_low),
+                (
+                    ring * math.cos(angle),
+                    ring * math.sin(angle),
+                    (z_low + z_high) / 2.0,
                 ),
                 rotation_z=angle,
             )
@@ -463,7 +522,7 @@ class ProceduralProvider:
         profile = profiles.scaled_profile(
             letter,
             square_size=style.square_size,
-            height_scale=style.height_scale,
+            height_scale=style.height_scale_for(letter),
             radius_scale=style.radius_scale,
             taper=style.taper,
         )
@@ -471,6 +530,8 @@ class ProceduralProvider:
 
         if letter == "R":
             _add_rook_crenellations(obj, style, rng)
+        elif letter == "Q" and style.queen_coronet:
+            _add_queen_coronet(obj, style, rng)
         elif letter == "K":
             _add_king_cross(obj, style)
         elif letter == "N":

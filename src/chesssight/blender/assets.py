@@ -261,7 +261,7 @@ class AssetLibraryProvider:
         obj.scale = (
             style.square_size * style.radius_scale,
             style.square_size * style.radius_scale,
-            style.square_size * style.height_scale,
+            style.square_size * style.height_scale_for(letter),
         )
         for other in bpy.context.scene.objects:
             other.select_set(False)

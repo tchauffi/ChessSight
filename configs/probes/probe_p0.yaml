@@ -1,0 +1,282 @@
+count: 4800
+master_seed: 20260803
+render:
+  engine: CYCLES
+  samples: 48
+  resolution:
+  - 640
+  - 640
+  use_gpu: true
+  compute_device_type: OPTIX
+  denoise: true
+  image_format: JPEG
+  jpeg_quality: 92
+  render_id_pass: true
+camera:
+  azimuth_deg:
+    min: 0.0
+    max: 360.0
+  elevation_deg:
+    min: 8.0
+    max: 75.0
+  framing_margin:
+    min: 0.95
+    max: 1.9
+  distance:
+    min: 6.0
+    max: 40.0
+  roll_deg:
+    min: -6.0
+    max: 6.0
+  focal_mm:
+    min: 24.0
+    max: 85.0
+  sensor_width_mm: 36.0
+  target_jitter:
+    min: -1.2
+    max: 1.2
+  dof_probability: 0.35
+  f_stop:
+    min: 1.8
+    max: 11.0
+lighting:
+  hdri_dir: ~/assets/chesssight/hdri
+  hdri_probability: 1.0
+  hdri_rotation_deg:
+    min: 0.0
+    max: 360.0
+  world_strength:
+    min: 0.3
+    max: 2.5
+  hdri_strength:
+    min: 0.5
+    max: 1.6
+  world_color_temperature:
+    min: 3200.0
+    max: 7500.0
+  sun_energy:
+    min: 1.0
+    max: 6.0
+  sun_angle_deg:
+    min: 0.5
+    max: 8.0
+  sun_elevation_deg:
+    min: 25.0
+    max: 85.0
+  lamp_count:
+    min: 0
+    max: 2
+  lamp_energy:
+    min: 1500.0
+    max: 12000.0
+  lamp_size:
+    min: 1.0
+    max: 8.0
+  lamp_distance:
+    min: 8.0
+    max: 18.0
+  lamp_elevation_deg:
+    min: 25.0
+    max: 85.0
+board:
+  square_size: 1.0
+  thickness:
+    min: 0.15
+    max: 0.5
+  border_width:
+    min: 0.0
+    max: 1.0
+  border_tone:
+    min: 0.0
+    max: 1.0
+  light_square_color:
+  - - 0.72
+    - 0.62
+    - 0.46
+  - - 0.85
+    - 0.82
+    - 0.75
+  - - 0.66
+    - 0.57
+    - 0.4
+  dark_square_color:
+  - - 0.16
+    - 0.09
+    - 0.05
+  - - 0.11
+    - 0.16
+    - 0.11
+  - - 0.09
+    - 0.09
+    - 0.12
+  roughness:
+    min: 0.15
+    max: 0.75
+  color_jitter:
+    min: -0.18
+    max: 0.18
+  min_piece_contrast: 0.14
+  material_styles:
+    textured: 0.3
+    wood: 0.25
+    marble: 0.15
+    plastic: 0.3
+  grain_scale:
+    min: 1.5
+    max: 6.0
+pieces:
+  provider: procedural
+  asset_manifest: null
+  sets:
+  - provider: uppachess-staunton
+    asset_manifest: /home/tchauffi/Documents/dev/ChessSight/assets/baked/manifest.json
+    weight: 0.6
+  - provider: procedural
+    asset_manifest: null
+    weight: 0.4
+  height_scale:
+    min: 0.85
+    max: 1.15
+  radius_scale:
+    min: 0.85
+    max: 1.15
+  taper:
+    min: -0.12
+    max: 0.12
+  bevel_width:
+    min: 0.002
+    max: 0.012
+  lathe_segments:
+    min: 16
+    max: 48
+  queen_coronet: false
+  rook_merlons:
+    min: 4
+    max: 6
+  letter_height_jitter:
+    min: 1.0
+    max: 1.0
+  white_color:
+  - 0.9
+  - 0.87
+  - 0.8
+  black_color:
+  - 0.07
+  - 0.06
+  - 0.06
+  roughness:
+    min: 0.1
+    max: 0.7
+  material_styles:
+    plastic: 0.4
+    wood: 0.35
+    marble: 0.25
+  veneers:
+    light: oak_veneer_01
+    dark: rosewood_veneer1
+  veneer_hue_shift:
+    min: -0.06
+    max: 0.06
+  veneer_saturation:
+    min: 0.75
+    max: 1.25
+  veneer_brightness:
+    min: 0.8
+    max: 1.25
+  position_jitter:
+    min: -0.16
+    max: 0.16
+  rotation_jitter_deg:
+    min: -180.0
+    max: 180.0
+  knight_facing_jitter_deg:
+    min: -30.0
+    max: 30.0
+  tilt_jitter_deg:
+    min: -3.0
+    max: 3.0
+  tipped_probability: 0.02
+  captured_probability: 0.4
+  captured_count:
+    min: 1
+    max: 12
+  captured_offset:
+    min: 0.9
+    max: 2.4
+  captured_spacing:
+    min: 0.55
+    max: 0.85
+  captured_lying_probability: 0.25
+scene:
+  table_size:
+    min: 20.0
+    max: 45.0
+  table_thickness:
+    min: 0.4
+    max: 1.0
+  table_color:
+  - - 0.25
+    - 0.16
+    - 0.1
+  - - 0.55
+    - 0.52
+    - 0.48
+  - - 0.1
+    - 0.1
+    - 0.12
+  table_roughness:
+    min: 0.2
+    max: 0.9
+  texture_dir: ~/assets/chesssight/textures
+  texture_probability: 0.85
+  texture_scale:
+    min: 1.5
+    max: 5.0
+  texture_rotation_deg:
+    min: 0.0
+    max: 360.0
+  texture_tint:
+    min: 0.75
+    max: 1.0
+  texture_roughness_shift:
+    min: -0.15
+    max: 0.15
+  texture_hue_shift:
+    min: -0.02
+    max: 0.02
+  texture_saturation:
+    min: 0.85
+    max: 1.15
+  texture_brightness:
+    min: 0.8
+    max: 1.2
+  clock_probability: 0.45
+  clock_digital_probability: 0.5
+  clock_width:
+    min: 3.0
+    max: 4.6
+  clock_offset:
+    min: 0.8
+    max: 2.6
+  distractor_count:
+    min: 0
+    max: 3
+  distractor_probability: 0.3
+positions:
+  pgn_paths:
+  - ~/assets/chesssight/pgn/lichess_db_standard_rated_2013-01.pgn.zst
+  - ~/assets/chesssight/pgn/lichess_db_standard_rated_2013-02.pgn.zst
+  max_games: 40000
+  plies_per_game: 3
+  skip_opening_plies: 6
+  weight_pgn: 0.7
+  weight_random: 0.3
+  random_min_pieces: 2
+  random_max_pieces: 32
+  weight_pgn_opening: 0.0
+  opening_skip_plies: 4
+  opening_max_plies: 24
+output:
+  root: ~/datasets/chesssight
+  run_name: probe_p0
+  split: train
