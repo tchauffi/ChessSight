@@ -111,6 +111,7 @@ def main() -> None:
                     "turns": int(turns),
                     "colour": evidence["colour"],
                     "pieces": evidence["pieces"],
+                    "pawns": evidence["pawns"],
                 },
             }
         )

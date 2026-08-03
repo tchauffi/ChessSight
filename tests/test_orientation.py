@@ -19,6 +19,7 @@ from chesssight.train.orientation import (
     colour_score,
     orient,
     orient_position,
+    pawn_home_score,
     piece_score,
     rotate,
     square_luminance,
@@ -92,7 +93,39 @@ class TestPieces:
         assert piece_score(board) > 0
 
 
+class TestPawnHome:
+    def test_the_starting_position_is_fully_home(self):
+        assert pawn_home_score(START) == pytest.approx(1.0)
+
+    def test_a_half_turn_reads_every_pawn_as_invading(self):
+        assert pawn_home_score(rotate(START, 2).tolist()) == pytest.approx(-1.0)
+
+    def test_one_colour_without_pawns_abstains(self):
+        # A lone runner is exactly the pawn whose position lies about the
+        # orientation; without the other colour to balance it, no vote.
+        board = [[0] * BOARD_SIZE for _ in range(BOARD_SIZE)]
+        board[1][3] = 1  # white pawn one step from promotion
+        assert pawn_home_score(board) == 0.0
+
+    def test_a_pawnless_board_abstains(self):
+        board = [[0] * BOARD_SIZE for _ in range(BOARD_SIZE)]
+        board[0][4] = 12
+        board[7][4] = 6
+        assert pawn_home_score(board) == 0.0
+
+
 class TestOrient:
+    def test_pawns_overrule_a_lying_material_vote(self):
+        # A game photographed with White sitting at the top: the material vote
+        # reads it flipped (white pieces far, black pieces near), and only the
+        # pawns -- each on its own half -- know which way the game ran. This is
+        # the real failure that cost 45 of ChessReD val's 330 boards.
+        grid = fen_to_grid("QRN5/8/1p6/8/8/1P6/8/qrn5 w - - 0 1")
+        assert piece_score(grid) < 0  # material alone would flip this board
+        turns, evidence = orient(grid, canonical_luminance())
+        assert turns == 0
+        assert evidence["pawns"] == pytest.approx(1.0)
+
     @pytest.mark.parametrize("turns", [0, 1, 2, 3])
     def test_every_rotation_of_a_board_comes_back(self, turns):
         # A quad ordered from a different starting corner reads the board rotated

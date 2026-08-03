@@ -23,13 +23,26 @@ robust and almost always available. The piece vote needs pieces, and a position
 symmetric in material -- an empty board, or the opening seen from the side --
 leaves a genuine 180-degree ambiguity that no amount of looking will resolve. The
 functions below report that rather than picking one and sounding certain.
+
+**Pawns break the 180-degree tie better than material does.** The material
+vote assumes White's men sit nearer the camera, and on ChessReD's val split
+that assumption is wrong for whole games at a time -- 45 of 330 boards read
+flipped, four fifths of the split's wrong squares. Pawns carry a signal that
+does not depend on where the players sat: a pawn stands on its own half of the
+board for most of its life, and a 180-degree flip reads every pawn as deep in
+enemy territory. Counting own-half pawns (:func:`pawn_home_score`) fixes 25 of
+those 45 boards and regresses none; the term abstains on pawnless and
+runner-endgame positions rather than guessing.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from chesssight.data.fen import BOARD_SIZE, is_black, is_white
+from chesssight.data.fen import BOARD_SIZE, LETTER_TO_CLASS, is_black, is_white
+
+_WHITE_PAWN = LETTER_TO_CLASS["P"]
+_BLACK_PAWN = LETTER_TO_CLASS["p"]
 
 #: Fraction of a square sampled when measuring its colour. Well inside the edge:
 #: a square's border is a high-contrast line, and including it would measure the
@@ -40,6 +53,14 @@ SAMPLE_FRACTION = 0.5
 #: heavy shadow, or one whose squares are nearly the same tone. Expressed as a
 #: fraction of the image's own luminance range so it does not assume 8-bit.
 MIN_COLOUR_MARGIN = 0.02
+
+#: How strongly the pawn vote counts against the material vote in the
+#: 180-degree tie-break. Both terms are normalised to [-1, 1], so 2.0 lets a
+#: unanimous pawn vote overrule a unanimous material vote while a split pawn
+#: vote still defers. Swept on ChessReD val, where 218/330 boards read exactly
+#: right against 198 without the term; the result is flat from 2.0 to 4.0, so
+#: the value is a plateau, not a fit.
+PAWN_HOME_WEIGHT = 2.0
 
 
 def square_luminance(image, homography) -> np.ndarray:
@@ -106,6 +127,37 @@ def piece_score(grid: list[list[int]]) -> float:
     return (near - far) / total if total else 0.0
 
 
+def pawn_home_score(grid: list[list[int]]) -> float:
+    """How many pawns stand on their own half of the board, net, in [-1, 1].
+
+    White pawns belong on ranks 2-4 and black pawns on ranks 5-7 for most of a
+    game, and unlike the material split this does not assume anything about
+    where the players sat: a 180-degree flip reads every pawn as deep in enemy
+    territory, so the correct orientation scores higher whenever the pawn
+    structure is at all intact. Returns 0 -- no vote -- unless both colours
+    still have a pawn: a lone runner is exactly the pawn whose position lies
+    about the orientation, and the endgames where that happens are the ones
+    the material vote still reads correctly.
+    """
+    own = total = 0
+    half = BOARD_SIZE // 2
+    seen_white = seen_black = False
+    for rank in range(BOARD_SIZE):
+        for file in range(BOARD_SIZE):
+            occupant = grid[rank][file]
+            if occupant == _WHITE_PAWN:
+                seen_white = True
+                total += 1
+                own += rank >= half
+            elif occupant == _BLACK_PAWN:
+                seen_black = True
+                total += 1
+                own += rank < half
+    if not (seen_white and seen_black):
+        return 0.0
+    return (2 * own - total) / total
+
+
 def rotate(array: list[list[int]] | np.ndarray, turns: int) -> np.ndarray:
     """One quarter-turn convention, shared by the grid and the luminance map.
 
@@ -124,29 +176,32 @@ def orient(
     Returns ``(turns, evidence)``. Apply ``turns`` with :func:`rotate` to both the
     grid and the corner list to get the oriented board.
 
-    ``evidence`` carries ``colour`` and ``pieces``: the margin by which each half
-    of the decision was made. A caller that needs to know whether to trust the
-    answer should look at those rather than at the fact that a number came back --
-    an empty board still returns a rotation, it just has no piece evidence behind
-    it.
+    ``evidence`` carries ``colour``, ``pieces`` and ``pawns``: the raw value of
+    each signal behind the decision. A caller that needs to know whether to
+    trust the answer should look at those rather than at the fact that a number
+    came back -- an empty board still returns a rotation, it just has no piece
+    evidence behind it.
     """
     candidates = []
     for turns in range(4):
+        rotated = rotate(grid, turns).tolist()
         colour = colour_score(rotate(luminance, turns))
-        pieces = piece_score(rotate(grid, turns).tolist())
-        candidates.append((turns, colour, pieces))
+        pieces = piece_score(rotated)
+        pawns = pawn_home_score(rotated)
+        score = pieces + PAWN_HOME_WEIGHT * pawns
+        candidates.append((turns, colour, score, pieces, pawns))
 
     # Colour first, and as a filter rather than a term in a sum: it is the more
     # reliable of the two, and letting a confident piece vote outweigh it would
     # allow an answer that puts a dark square on a8 -- which is not a board.
-    best_colour = max(colour for _, colour, _ in candidates)
+    best_colour = max(colour for _, colour, _, _, _ in candidates)
     surviving = [
         candidate
         for candidate in candidates
         if candidate[1] >= best_colour - MIN_COLOUR_MARGIN
     ]
     chosen = max(surviving, key=lambda candidate: candidate[2])
-    turns, colour, pieces = chosen
+    turns, colour, score, pieces, pawns = chosen
 
     runner_up = max(
         (candidate[2] for candidate in surviving if candidate[0] != turns),
@@ -155,9 +210,11 @@ def orient(
     return turns, {
         "colour": colour,
         "pieces": pieces,
-        # How much better the winner's piece vote was than the best alternative
-        # that survived the colour filter. Zero means a real 180-degree tie.
-        "margin": 0.0 if runner_up is None else pieces - runner_up,
+        "pawns": pawns,
+        # How much better the winner's tie-break score was than the best
+        # alternative that survived the colour filter. Zero means a real
+        # 180-degree tie.
+        "margin": 0.0 if runner_up is None else score - runner_up,
         "candidates": float(len(surviving)),
     }
 
