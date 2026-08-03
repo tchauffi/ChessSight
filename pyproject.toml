@@ -101,7 +101,7 @@ ignore_missing_imports = true
 # only stops CI failing on an absence it was configured to have. torchvision and
 # the rest additionally ship no py.typed marker, so they stay untyped either way.
 [[tool.mypy.overrides]]
-module = ["onnxruntime.*", "onnx.*"]
+module = ["onnxruntime.*", "onnx.*", "onnxconverter_common.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
