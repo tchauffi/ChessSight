@@ -38,7 +38,7 @@ test-integration:
 
 # The published page. `site` needs nothing but the repository; `site-refresh`
 # re-runs both models over a real split, so it needs the checkpoints.
-DETECTOR ?= $(HOME)/runs/rtdetr_corners/best
+DETECTOR ?= $(HOME)/runs/rtdetr_v4/best
 CORNERS  ?= $(HOME)/runs/corner_swin_v2/best
 CHESSRED ?= $(HOME)/datasets/chesssight/chessred
 

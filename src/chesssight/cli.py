@@ -158,11 +158,20 @@ def onnx_export(
         Path, typer.Option("--corners", help="Corner heatmap checkpoint directory.")
     ],
     out: Annotated[Path, typer.Option("--out", "-o", help="Bundle directory.")],
+    fp16: Annotated[
+        bool,
+        typer.Option(
+            "--fp16/--no-fp16",
+            help="Store weights as float16 (io stays float32): half the bundle, "
+            "measured identical to torch on ChessReD test, and what docs/models "
+            "ships. uint8 weight quantisation measured 8 points worse — don't.",
+        ),
+    ] = False,
 ) -> None:
     """Write both models to ONNX, with the metadata needed to run them."""
     from chesssight.inference.onnx import export
 
-    export(detector, corners, out)
+    export(detector, corners, out, fp16=fp16)
     for file in sorted(out.iterdir()):
         typer.echo(f"  {file.name:16} {file.stat().st_size / 1e6:8.1f} MB")
 

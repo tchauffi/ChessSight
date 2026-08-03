@@ -7,7 +7,7 @@ decide which corner is a8. Everything else in the repository exists to train or
 evaluate the two models this function loads.
 
 The pipeline's measured accuracy on ChessReD's held-out test split, with both
-models doing their own work end to end: 97.06% of squares, 31.05% of boards
+models doing their own work end to end: 99.32% of squares, 71.24% of boards
 exactly right, geometry found on 306 of 306 photographs.
 """
 

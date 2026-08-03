@@ -2,11 +2,11 @@
 
 ChessSight is a computer vision project designed to identify and classify chess pieces on a chessboard using image processing techniques. This repository contains the code and resources needed to detect chess pieces in real-time, providing a foundation for applications in automated chess analysis and gameplay.
 
-## Detector v0.1.0
+## Detector v0.2.0
 
 An RT-DETR detector trained **entirely on synthetic renders** — it has never seen a
 real photograph during training. On the ChessReD test split of 306 real photographs it
-scores **mAP 0.636** (mAP@50 0.884). It emits boxes for the board and the pieces; it
+scores **mAP 0.621** (mAP@50 0.879). It emits boxes for the board and the pieces; it
 does not emit board corners, so there is no per-square position readout yet.
 
 See **[MODEL_CARD.md](MODEL_CARD.md)** for the full results, training recipe and — the
@@ -20,21 +20,22 @@ uv run chesssight train predict <checkpoint> --data <run> --out sheet.png
 ## Reading a position
 
 The detector and the corner model together turn a photograph into a FEN. On
-ChessReD's held-out test split that reads **99.25% of squares** and **68.30% of
+ChessReD's held-out test split that reads **99.32% of squares** and **71.24% of
 boards** exactly, with geometry found on 306 of 306 photographs.
 
 That depends on a detail worth knowing. A detector checkpoint ships a threshold
 fitted for detection **F1**, and reading a board is a different objective:
 `grid_from` keeps only the best-scoring detection per square and discards
 anything off the board, so a spare low-scoring candidate is usually harmless
-while a missing one always costs a square. `POSITION_THRESHOLD` (0.10, chosen on
+while a missing one always costs a square. `POSITION_THRESHOLD` (0.05, chosen on
 val and measured on test) is the default everywhere the pipeline reads a
-position; `--threshold` overrides it. At the calibration's own 0.331 the same
-checkpoints read 97.06% / 31.05%.
+position; `--threshold` overrides it. The value belongs to the shipped
+checkpoint: the previous detector's compressed scores wanted 0.10, and a swap
+of detector should re-run the val sweep rather than inherit the constant.
 
 ```bash
 uv run chesssight predict photo.jpg \
-  --detector ~/runs/rtdetr_corners/best \
+  --detector ~/runs/rtdetr_v4/best \
   --corners  ~/runs/corner_swin_v2/best --diagram position.svg
 ```
 
@@ -72,25 +73,22 @@ uv run chesssight onnx parity bundle --detector <detector> --corners <corners> \
 
 Parity compares model outputs (which must agree to `--tolerance`) and FENs
 (which are reported, not required to match). Exact FEN equality is *not*
-expected: the operating threshold sits in a dense part of the score
-distribution, so a detection within a thousandth of it flips on floating-point
-noise. Measured end to end on the ChessReD test split, the two backends land
-within a rounding error of each other:
+expected: a detection within a thousandth of the threshold flips on
+floating-point noise. Measured on the ChessReD test split for the v0.2.0
+bundle: **304 of 306 FENs identical (99.3%)**, boxes within 9e-4 and the
+corner heatmap within 2e-5 of torch. The detector logits differ by up to
+5.8e-3 (sorted) — more than the previous export's 3e-5 and over the default
+tensor tolerance, worth a look at export numerics, but at the shipped
+operating point it amounts to the two differing boards above.
 
-| | torch | ONNX |
-|---|---|---|
-| per-square | 97.06% | 97.04% |
-| boards exact | 31.05% | 30.72% |
-| geometry found | 306/306 | 306/306 |
-
-(Both measured at the old 0.331 operating point, before `POSITION_THRESHOLD`
-became the default; the two backends share it, so the comparison holds.)
-
-**Do not ship the int8 graphs.** Dynamic quantisation takes the bundle from
-288 MB to 79 MB, which is tempting for anywhere the weights have to travel, and
-it costs far more than the file size suggests: on a matched 60-image subset,
-per-square falls 97.01% -> 94.48% and boards-exact **26.67% -> 11.67%**. The
-model's weakness is already small objects, and that is exactly what 8-bit
+**The checked-in bundle is fp16, and that is the only reduced format allowed.**
+The fp32 detector graph (172 MB) is over GitHub's 100 MB file limit, so
+`docs/models` ships `onnx export --fp16` — measured **identical** to torch on
+the ChessReD test split (71.24% boards exact either way). Every 8-bit variant
+measured is a trap: full dynamic quantisation collapsed boards-exact
+26.67% -> 11.67% on a matched subset, and even uint8 *weight-only*
+quantisation — which an earlier bundle shipped — reads 63.07% against torch's
+71.24%. The model's weakness is small objects, and that is exactly what 8-bit
 weights blur away.
 
 ### The published page

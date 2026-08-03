@@ -21,11 +21,12 @@ export const C = {
   ],
   "boardIndex": 12,
   "cornerIndex": 13,
-  "threshold": 0.1,
+  "threshold": 0.05,
   "footX": 0.5,
   "footY": 0.96,
   "sampleFraction": 0.5,
   "minColourMargin": 0.02,
+  "pawnHomeWeight": 2.0,
   "boardCorners": [
     [
       0.0,
@@ -55,7 +56,7 @@ export const C = {
     0.22499999403953552
   ],
   "calibration": {
-    "scale": 4.365769586286914,
-    "bias": 16.911929641426397
+    "scale": 2.950195959361219,
+    "bias": 10.596236279888258
   }
 };

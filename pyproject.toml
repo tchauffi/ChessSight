@@ -42,6 +42,8 @@ onnx = [
 #   uv sync --extra train --extra onnx --extra onnx-export
 onnx-export = [
     "onnx>=1.17,<2.0",
+    # fp16 weight conversion for the checked-in bundle (--fp16).
+    "onnxconverter-common>=1.14,<2.0",
 ]
 
 # The RTX 50-series is Blackwell (sm_120); the default PyPI wheels do not carry

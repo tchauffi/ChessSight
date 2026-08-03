@@ -55,11 +55,13 @@ def foot(box: list[float]) -> tuple[float, float]:
 #: usually harmless while a missing one always costs a square. Recall is worth
 #: far more than precision here.
 #:
-#: Chosen by sweeping ChessReD **val** and measured on **test**, where against
-#: the calibration's own 0.331 it moves per-square 97.06% -> 99.25% and
-#: boards-exact 31.05% -> 68.30%. It lives in this module rather than beside
-#: the reader so that naming it costs no torch import.
-POSITION_THRESHOLD = 0.10
+#: Chosen by sweeping ChessReD **val** and measured on **test**. Swept per
+#: detector: the value belongs to the shipped checkpoint's calibrated score
+#: distribution, and rtdetr_v4's prior-bias head init decompressed the scores
+#: enough to halve the optimum (the previous detector wanted 0.10). It lives in
+#: this module rather than beside the reader so that naming it costs no torch
+#: import.
+POSITION_THRESHOLD = 0.05
 
 
 def grid_from(detections: list[dict], homography: np.ndarray) -> list[list[int]]:
