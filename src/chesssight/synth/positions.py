@@ -146,7 +146,8 @@ class PgnPositionSampler(PositionSampler):
 
     ``plies_per_game`` positions are taken from each game at random plies, skipping
     the first ``skip_opening_plies`` so the dataset is not dominated by the
-    starting position.
+    starting position. ``max_plies`` bounds the window from above -- pass a small
+    one to draw only openings, where the back ranks are still crowded.
     """
 
     def __init__(
@@ -156,6 +157,7 @@ class PgnPositionSampler(PositionSampler):
         max_games: int = 5_000,
         plies_per_game: int = 3,
         skip_opening_plies: int = 6,
+        max_plies: int | None = None,
         seed: int = 0,
     ) -> None:
         self.positions: list[str] = []
@@ -166,6 +168,7 @@ class PgnPositionSampler(PositionSampler):
                 max_games=max_games,
                 plies_per_game=plies_per_game,
                 skip_opening_plies=skip_opening_plies,
+                max_plies=max_plies,
                 rng=loader_rng,
             )
         if not self.positions:
@@ -188,6 +191,7 @@ class PgnPositionSampler(PositionSampler):
         max_games: int,
         plies_per_game: int,
         skip_opening_plies: int,
+        max_plies: int | None,
         rng: random.Random,
     ) -> None:
         with self._open_text(path) as handle:
@@ -198,6 +202,8 @@ class PgnPositionSampler(PositionSampler):
                 board = game.board()
                 fens = []
                 for ply, move in enumerate(game.mainline_moves()):
+                    if max_plies is not None and ply >= max_plies:
+                        break
                     board.push(move)
                     if ply >= skip_opening_plies:
                         fens.append(board.board_fen())

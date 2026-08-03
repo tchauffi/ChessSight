@@ -230,6 +230,20 @@ class PiecesConfig(StrictModel):
     taper: FloatRange = FloatRange(min=-0.12, max=0.12)
     bevel_width: FloatRange = FloatRange(min=0.002, max=0.012)
     lathe_segments: IntRange = IntRange(min=16, max=48)
+    #: Give the procedural queen a coronet -- a ring of points around the crown.
+    #: Off by default so existing recipes render byte-identical sets; without it
+    #: the queen and king differ only in height and the king's cross, which is
+    #: the pair the detector confuses most on real photographs.
+    queen_coronet: bool = False
+    #: How many merlons the procedural rook's rim carries, sampled per scene.
+    #: The default matches the historical fixed range; widening it (e.g. 3-8)
+    #: varies the rim rhythm a distant rook is recognised by.
+    rook_merlons: IntRange = IntRange(min=4, max=6)
+    #: Extra per-letter height jitter, sampled once per letter per scene on top
+    #: of `height_scale`. The default 1.0-1.0 is a no-op. A range like 0.94-1.06
+    #: makes the king/queen height gap vary between scenes, so height alone
+    #: cannot name the piece. Applies to procedural and imported sets alike.
+    letter_height_jitter: FloatRange = FloatRange(min=1.0, max=1.0)
     white_color: RGB = [0.90, 0.87, 0.80]
     black_color: RGB = [0.07, 0.06, 0.06]
     roughness: FloatRange = FloatRange(min=0.1, max=0.7)
@@ -382,6 +396,15 @@ class PositionsConfig(StrictModel):
     weight_random: float = Field(default=0.2, ge=0)
     random_min_pieces: int = Field(default=2, ge=2, le=64)
     random_max_pieces: int = Field(default=32, ge=2, le=64)
+    #: A third source: the same PGN games, restricted to early plies where the
+    #: back ranks are still crowded. 0 disables it. The main `weight_pgn` draw
+    #: skips openings *and* has no upper ply bound, so mid- and endgames
+    #: dominate it; this source exists because "queen read as king behind its
+    #: neighbours on a full back rank" is the detector's worst real-photo
+    #: failure, and such boards are rare in the main draw.
+    weight_pgn_opening: float = Field(default=0.0, ge=0)
+    opening_skip_plies: int = Field(default=4, ge=0)
+    opening_max_plies: int = Field(default=24, gt=0)
 
     @model_validator(mode="after")
     def _check_weights(self) -> Self:
@@ -392,6 +415,11 @@ class PositionsConfig(StrictModel):
         if not self.pgn_paths and self.weight_random <= 0:
             raise ValueError(
                 "no pgn_paths configured, so weight_random must be positive"
+            )
+        if self.opening_skip_plies >= self.opening_max_plies:
+            raise ValueError(
+                "opening_skip_plies must be below opening_max_plies, or the "
+                "opening source has no plies to draw from"
             )
         return self
 

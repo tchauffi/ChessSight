@@ -112,6 +112,18 @@ class TestPgnPositionSampler:
         second = pos.PgnPositionSampler([FIXTURE_PGN], seed=3).positions
         assert first == second
 
+    def test_max_plies_bounds_the_window_from_above(self):
+        # An opening-only sampler: every drawn position must still carry a
+        # crowded back rank, which is the point of bounding the window.
+        bounded = pos.PgnPositionSampler(
+            [FIXTURE_PGN], plies_per_game=50, skip_opening_plies=0, max_plies=8
+        )
+        unbounded = pos.PgnPositionSampler(
+            [FIXTURE_PGN], plies_per_game=50, skip_opening_plies=0
+        )
+        assert 0 < len(bounded) < len(unbounded)
+        assert set(bounded.positions) <= set(unbounded.positions)
+
     def test_empty_source_raises(self, tmp_path: Path):
         empty = tmp_path / "empty.pgn"
         empty.write_text("", encoding="utf-8")

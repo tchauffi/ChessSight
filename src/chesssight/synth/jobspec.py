@@ -179,6 +179,13 @@ class ResolvedPieces(StrictModel):
     taper: float = Field(default=0.0, gt=-1.0, lt=1.0)
     bevel_width: float = Field(ge=0)
     lathe_segments: int = Field(ge=3)
+    #: Ring of points around the procedural queen's crown. Default off, so specs
+    #: written before the field existed rebuild the same geometry.
+    queen_coronet: bool = False
+    #: Merlon-count range for the procedural rook, sampled at build time.
+    rook_merlon_range: tuple[int, int] = (4, 6)
+    #: Per-letter multiplier on top of ``height_scale``; missing letters mean 1.0.
+    letter_height_scales: dict[str, float] = Field(default_factory=dict)
     white_color: RGB
     black_color: RGB
     roughness: float = Field(ge=0, le=1)

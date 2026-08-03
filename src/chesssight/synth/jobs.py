@@ -46,6 +46,20 @@ def build_sampler(config: GeneratorConfig) -> PositionSampler:
                 positions.weight_pgn,
             )
         )
+    if positions.pgn_paths and positions.weight_pgn_opening > 0:
+        components.append(
+            (
+                PgnPositionSampler(
+                    [Path(path).expanduser() for path in positions.pgn_paths],
+                    max_games=positions.max_games,
+                    plies_per_game=positions.plies_per_game,
+                    skip_opening_plies=positions.opening_skip_plies,
+                    max_plies=positions.opening_max_plies,
+                    seed=config.master_seed,
+                ),
+                positions.weight_pgn_opening,
+            )
+        )
     if positions.weight_random > 0:
         components.append(
             (

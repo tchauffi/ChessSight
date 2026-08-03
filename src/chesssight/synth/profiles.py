@@ -62,6 +62,18 @@ ROOK_CRENELLATIONS: Final = (4, 6)
 ROOK_RIM_OUTER: Final = 0.29
 ROOK_RIM_INNER: Final = 0.20
 
+#: The queen's coronet: a ring of points encircling the crown, added as separate
+#: geometry when ``pieces.queen_coronet`` is enabled. Without it the procedural
+#: queen is a pure surface of revolution whose profile differs from the king's by
+#: a few hundredths -- height is then the only cue separating the two letters,
+#: and queen<->king is the detector's single worst confusion on real photographs.
+#: The ring radius clears the crown's own radius (<= 0.12 over the band) across
+#: the full taper range, so the points always break the silhouette.
+QUEEN_CORONET_POINTS: Final = (5, 9)
+QUEEN_CORONET_RADIUS: Final = 0.135
+QUEEN_CORONET_THICKNESS: Final = 0.045
+QUEEN_CORONET_BAND: Final = (0.86, 0.97)
+
 PAWN: Final[Profile] = (
     (0.00, 0.00),
     (0.30, 0.00),
