@@ -108,9 +108,10 @@ def predict(
         float,
         typer.Option(
             "--threshold",
-            help="Detection score floor. The default reads boards; the "
-            "checkpoint's own calibration point is stricter and reads them "
-            "worse (see the README).",
+            help="Floor on a square's fused score (the mean over the full "
+            "frame, board crop and mirrored crop passes). The default reads "
+            "boards; the checkpoint's own calibration point is stricter and "
+            "reads them worse (see the README).",
         ),
     ] = POSITION_THRESHOLD,
 ) -> None:
@@ -323,7 +324,7 @@ def demo(
     ] = None,
     threshold: Annotated[
         float,
-        typer.Option("--threshold", help="Detection score floor (see `predict`)."),
+        typer.Option("--threshold", help="Fused score floor (see `predict`)."),
     ] = POSITION_THRESHOLD,
 ) -> None:
     """Serve a page that reads the position off a photograph you drop on it.

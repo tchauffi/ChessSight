@@ -321,11 +321,8 @@ class OnnxReader:
     threshold: float | None = POSITION_THRESHOLD
 
     def read(self, image: Image.Image) -> dict[str, Any]:
-        from chesssight.data.fen import grid_to_fen
-        from chesssight.data.geometry import board_to_image_homography
         from chesssight.train.corners import order_clockwise
-        from chesssight.train.orientation import orient_position
-        from chesssight.train.position import grid_from
+        from chesssight.train.position import read_board
 
         corner_size = self.meta["corner_size"]
         heatmap = self.corners.run(
@@ -344,17 +341,7 @@ class OnnxReader:
         )
 
         calibration = self.meta.get("calibration")
-        threshold = 0.0 if calibration else 0.3
-        logits, boxes = self.detector.run(
-            ["logits", "pred_boxes"],
-            {
-                "pixel_values": detector_input(
-                    image, self.meta["detector_size"], self.meta["rescale"]
-                )
-            },
-        )
-        detections = decode_detections(logits, boxes, image.size, threshold)
-
+        platt = None
         if calibration:
             from chesssight.train.calibrate import Calibration
 
@@ -368,25 +355,31 @@ class OnnxReader:
                 f1=0.0,
                 detections_used=0,
             )
-            for detection in detections:
-                detection["score"] = platt.apply_one(detection["score"])
-            floor = (
-                self.threshold
-                if self.threshold is not None
-                else calibration["threshold"]
-            )
-            detections = [d for d in detections if d["score"] >= floor]
 
-        homography = board_to_image_homography(np.asarray(quad, dtype=np.float64))
-        grid = grid_from(detections, homography)
-        grid, quad, evidence = orient_position(grid, quad, image)
-        return {
-            "corners": quad,
-            "grid": grid,
-            "fen": grid_to_fen(grid),
-            "detections": detections,
-            "orientation_evidence": evidence,
-        }
+        def detect(view: Image.Image) -> list[dict[str, Any]]:
+            # No floor: the threshold applies to the fused score, as in the
+            # torch reader.
+            logits, boxes = self.detector.run(
+                ["logits", "pred_boxes"],
+                {
+                    "pixel_values": detector_input(
+                        view, self.meta["detector_size"], self.meta["rescale"]
+                    )
+                },
+            )
+            detections = decode_detections(logits, boxes, view.size, 0.0)
+            if platt is not None:
+                for detection in detections:
+                    detection["score"] = platt.apply_one(detection["score"])
+            return detections
+
+        if self.threshold is not None:
+            threshold = self.threshold
+        elif calibration:
+            threshold = calibration["threshold"]
+        else:
+            threshold = 0.3
+        return read_board(image, list(quad), detect, threshold)
 
 
 def load_reader(

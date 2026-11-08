@@ -4,7 +4,14 @@
 // visitors are here to read, and downloading that unasked would be rude.
 
 import { C } from "./constants.js";
-import { cornerInput, detectorInput, readPosition } from "./pipeline.js";
+import {
+  boardCrop,
+  cornerInput,
+  detectorInput,
+  findQuad,
+  readBoard,
+  viewDetections,
+} from "./pipeline.js";
 
 const QUAD_COLOUR = "#e0af45";
 const WHITE_COLOUR = "#7dd3fc";
@@ -94,6 +101,20 @@ async function loadModels() {
   }
 }
 
+/** The square board crop as its own canvas, optionally mirrored left to right. */
+function cropCanvas(source, [left, top, side], mirrored) {
+  const canvas = document.createElement("canvas");
+  canvas.width = side;
+  canvas.height = side;
+  const context = canvas.getContext("2d");
+  if (mirrored) {
+    context.translate(side, 0);
+    context.scale(-1, 1);
+  }
+  context.drawImage(source, left, top, side, side, 0, 0, side, side);
+  return canvas;
+}
+
 /** A greyscale copy at full size, for the orientation step. */
 function greyOf(canvas) {
   const { width, height } = canvas;
@@ -134,29 +155,39 @@ async function run(file) {
       [1, 3, C.cornerSize, C.cornerSize],
     );
     const heat = await state.corners.run({ image: cornerTensor });
-    const heatmap = heat.heatmap.data;
-    const heatSize = heat.heatmap.dims.at(-1);
-
-    const detectorTensor = new ort.Tensor(
-      "float32",
-      detectorInput(canvas, C.detectorSize),
-      [1, 3, C.detectorSize, C.detectorSize],
-    );
-    const out = await state.detector.run({ pixel_values: detectorTensor });
-    const logits = out.logits.data;
-    const boxes = out.pred_boxes.data;
-    const [, queries, classes] = out.logits.dims;
-
-    const result = readPosition(
-      { heatmap, heatSize, logits, boxes, queries, classes },
-      { width, height, grey: greyOf(canvas) },
-    );
-
-    if (!result.found) {
+    const quad = findQuad(heat.heatmap.data, heat.heatmap.dims.at(-1), width, height);
+    if (!quad) {
       setStatus("no board found — the corner model found fewer than four corners", "none");
       el("try-result").hidden = true;
       return;
     }
+
+    // Three looks at the board: the whole frame, a crop that gives small
+    // pieces real pixels, and that crop mirrored. Their scores are averaged.
+    const crop = boardCrop(quad, width, height);
+    const views = {
+      full: canvas,
+      crop: cropCanvas(canvas, crop, false),
+      mirrored: cropCanvas(canvas, crop, true),
+    };
+    const passes = {};
+    for (const [name, view] of Object.entries(views)) {
+      setStatus(`reading ${file.name} — ${name} pass…`, "idle", true);
+      const tensor = new ort.Tensor(
+        "float32",
+        detectorInput(view, C.detectorSize),
+        [1, 3, C.detectorSize, C.detectorSize],
+      );
+      const out = await state.detector.run({ pixel_values: tensor });
+      const [, queries, classes] = out.logits.dims;
+      passes[name] = viewDetections(
+        { logits: out.logits.data, boxes: out.pred_boxes.data, queries, classes },
+        view.width,
+        view.height,
+      );
+    }
+
+    const result = readBoard(quad, passes, { width, height, grey: greyOf(canvas) }, crop);
 
     drawOverlay(canvas, result);
     drawBoard(result.grid);

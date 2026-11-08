@@ -6,32 +6,61 @@ ChessSight is a computer vision project designed to identify and classify chess 
 
 An RT-DETR detector trained **entirely on synthetic renders** — it has never seen a
 real photograph during training. On the ChessReD test split of 306 real photographs it
-scores **mAP 0.621** (mAP@50 0.879). It emits boxes for the board and the pieces; it
-does not emit board corners, so there is no per-square position readout yet.
+scores **mAP 0.621** (mAP@50 0.879). It emits boxes for the board and the pieces; a
+second model finds the board's corners, and the two together read a position (below).
 
 See **[MODEL_CARD.md](MODEL_CARD.md)** for the full results, training recipe and — the
 part worth reading before you rely on it — the known limitations.
 
 ```bash
-uv run chesssight train video <checkpoint> -i clip.mp4 -o annotated.mp4
 uv run chesssight train predict <checkpoint> --data <run> --out sheet.png
 ```
 
 ## Reading a position
 
 The detector and the corner model together turn a photograph into a FEN. On
-ChessReD's held-out test split that reads **99.32% of squares** and **71.24% of
-boards** exactly, with geometry found on 306 of 306 photographs.
+ChessReD's held-out test split that reads **99.45% of squares** and **84.31% of
+boards** exactly, with geometry found on 306 of 306 photographs. The same two
+checkpoints read once, without the steps below, score 71.24%.
 
-That depends on a detail worth knowing. A detector checkpoint ships a threshold
-fitted for detection **F1**, and reading a board is a different objective:
-`grid_from` keeps only the best-scoring detection per square and discards
-anything off the board, so a spare low-scoring candidate is usually harmless
-while a missing one always costs a square. `POSITION_THRESHOLD` (0.05, chosen on
-val and measured on test) is the default everywhere the pipeline reads a
-position; `--threshold` overrides it. The value belongs to the shipped
-checkpoint: the previous detector's compressed scores wanted 0.10, and a swap
-of detector should re-run the val sweep rather than inherit the constant.
+Once the corners are known, `read_board` (in `train/position.py`, shared by every
+backend) does three things:
+
+- **Three detector passes, averaged per square.** The full frame, a square crop
+  around the board, and that crop mirrored. The crop gives small pieces real
+  pixels, and the passes make different mistakes, so a class that only one of
+  them proposes is diluted. The full frame's vote is weighted by how much of the
+  crop's resolution it has, squared, so a distant board's thumbnail stops pulling
+  the reading down.
+- **No colour holds more than its starting material.** Two white kings are not a
+  position, and a queen read as her king produces exactly that. The rule relabels
+  the weakest offending square to the next class the detector itself proposed
+  there. It only removes excess: a board read with no king stays visibly
+  incomplete rather than having one invented.
+- **Orientation**, as before: colour parity, then where the pawns stand.
+
+| ChessReD, boards exact | test | val | board at ~37% of frame (test) |
+|---|---|---|---|
+| one pass (v0.2.0's reader) | 218 / 306 | 234 / 330 | 31 / 306 |
+| three passes, fused | 239 | 250 | 234 |
+| + starting-material rule | **258** | **259** | **251** |
+
+The material rule made no board worse on any of the four sets it was measured
+on. The passes do trade: against the single pass, the whole reader fixes 48 test
+boards and breaks 8. The
+zoomed-out column puts each photograph on a 2× canvas, simulating a board seen
+from across a room with the sensor's real pixels. Three passes cost three
+detector runs: about 0.1 s per photograph on an RTX 5070 Ti, 0.69 s on CPU.
+
+One threshold detail is worth knowing. A detector checkpoint ships a threshold
+fitted for detection **F1**, and reading a board is a different objective: a
+square keeps only its best class and anything off the board is discarded, so a
+spare low-scoring candidate is usually harmless while a missing one always costs
+a square. `POSITION_THRESHOLD` (0.08 on the fused score, chosen on val and
+measured on test) is the default everywhere the pipeline reads a position;
+`--threshold` overrides it. The value belongs to the shipped checkpoint and to
+the fusion, so a swap of detector should re-run the val sweep rather than
+inherit the constant.
 
 ```bash
 uv run chesssight predict photo.jpg \
@@ -84,7 +113,9 @@ operating point it amounts to the two differing boards above.
 **The checked-in bundle is fp16, and that is the only reduced format allowed.**
 The fp32 detector graph (172 MB) is over GitHub's 100 MB file limit, so
 `docs/models` ships `onnx export --fp16` — measured **identical** to torch on
-the ChessReD test split (71.24% boards exact either way). Every 8-bit variant
+the ChessReD test split with the single-pass reader (71.24% boards exact either
+way). With the three-pass reader the fp16 bundle on CPU reads 257 of 306 boards
+exactly against torch's 258, with 301 of 306 FENs identical. Every 8-bit variant
 measured is a trap: full dynamic quantisation collapsed boards-exact
 26.67% -> 11.67% on a matched subset, and even uint8 *weight-only*
 quantisation — which an earlier bundle shipped — reads 63.07% against torch's

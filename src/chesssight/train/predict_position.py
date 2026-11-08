@@ -1,13 +1,16 @@
 """One photograph in, one position out.
 
 This is what the project is for, assembled from the parts that measured best:
-the RT-DETR detector finds the pieces, the corner heatmap finds the board, the
-homography assigns pieces to squares, and colour parity plus piece placement
-decide which corner is a8. Everything else in the repository exists to train or
-evaluate the two models this function loads.
+the corner heatmap finds the board, the RT-DETR detector looks at it three times
+(full frame, board crop, mirrored crop), the homography turns each look into
+per-square scores that are averaged, starting material settles impossible
+readings, and colour parity plus piece placement decide which corner is a8.
+Everything after the two models lives in :func:`chesssight.train.position.
+read_board`, shared with the ONNX backend. Everything else in the repository
+exists to train or evaluate the two models this function loads.
 
 The pipeline's measured accuracy on ChessReD's held-out test split, with both
-models doing their own work end to end: 99.32% of squares, 71.24% of boards
+models doing their own work end to end: 99.45% of squares, 84.31% of boards
 exactly right, geometry found on 306 of 306 photographs.
 """
 
@@ -19,7 +22,6 @@ from typing import Any
 
 import torch
 
-from chesssight.data.fen import grid_to_fen
 from chesssight.train.position import POSITION_THRESHOLD
 
 __all__ = ["POSITION_THRESHOLD", "PositionReader", "load_reader"]
@@ -50,12 +52,8 @@ class PositionReader:
         Returns a dict rather than raising on failure, because "no board found"
         is an answer, not an error: ``corners`` is None and there is no grid.
         """
-        import numpy as np
-
-        from chesssight.data.geometry import board_to_image_homography
         from chesssight.train.heatmap import predict_quad
-        from chesssight.train.orientation import orient_position
-        from chesssight.train.position import grid_from
+        from chesssight.train.position import read_board
         from chesssight.train.visualize import predict
 
         quad = predict_quad(
@@ -74,25 +72,20 @@ class PositionReader:
             threshold = self.calibration.threshold
         else:
             threshold = 0.3
-        detections = predict(
-            self.detector,
-            self.processor,
-            image,
-            self.device,
-            threshold=threshold,
-            calibration=self.calibration,
-        )
-        homography = board_to_image_homography(np.asarray(quad, dtype=np.float64))
-        grid = grid_from(detections, homography)
-        grid, quad, evidence = orient_position(grid, quad, image)
 
-        return {
-            "corners": quad,
-            "grid": grid,
-            "fen": grid_to_fen(grid),
-            "detections": detections,
-            "orientation_evidence": evidence,
-        }
+        def detect(view) -> list[dict]:
+            # No floor here: the threshold applies to the fused score, and a
+            # class below it in one pass still counts towards the mean.
+            return predict(
+                self.detector,
+                self.processor,
+                view,
+                self.device,
+                threshold=0.0,
+                calibration=self.calibration,
+            )
+
+        return read_board(image, list(quad), detect, threshold)
 
 
 def load_reader(
