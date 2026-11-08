@@ -4,17 +4,18 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ChessSight &mdash; reading a chess position off a photograph</title>
-<meta name="description" content="Two models trained entirely on synthetic
-  Blender renders read a chess position off a real photograph. Measured on 306
-  held-out photographs: 97.06% of squares, 31.05% of boards exactly." />
+<meta name="description" content="{{META_DESCRIPTION}}" />
 <link rel="canonical" href="https://tchauffi.github.io/ChessSight/" />
 <meta property="og:type" content="website" />
 <meta property="og:title" content="ChessSight" />
-<meta property="og:description" content="Reading a chess position off a
-  photograph, trained entirely on synthetic renders." />
+<meta property="og:description" content="{{META_DESCRIPTION}}" />
 <meta property="og:url" content="https://tchauffi.github.io/ChessSight/" />
 <meta property="og:image"
-  content="https://tchauffi.github.io/ChessSight/assets/ex000010-found.jpg" />
+  content="https://tchauffi.github.io/ChessSight/assets/card.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="A synthetic render of a chessboard beside
+  the pipeline's accuracy on real photographs" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon"
   href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#9822;</text></svg>" />
@@ -210,6 +211,10 @@
     margin: 0;
     max-width: none;
   }
+
+  /* `hidden` is a user-agent rule, so any author `display` beats it: the
+     try-it panel's drop zone and result frame showed before anything loaded. */
+  [hidden] { display: none !important; }
 
   img { max-width: 100%; height: auto; display: block; }
 
@@ -665,8 +670,7 @@
       <img src="{{HERO_PHOTO}}" width="680" alt="A photograph of a chessboard on a table,
         seen at an angle" />
       <span class="hero-arrow" aria-hidden="true">&rarr;</span>
-      <div class="board" role="img" aria-label="The chess position the model
-        read from the photograph">{{HERO_BOARD}}</div>
+      <div class="board" role="img" aria-label="{{HERO_LABEL}}">{{HERO_BOARD}}</div>
     </div>
     <p class="hero-fen"><span class="k">FEN</span>{{HERO_FEN}}</p>
   </header>
@@ -993,7 +997,8 @@ uv run chesssight synth run -c configs/default.yaml -n 20000 -w 2</pre>
 {{PIECE_DEFS}}
 </div>
 
-<script src="vendor/ort.min.js"></script>
+<!-- onnxruntime is loaded by app.js on demand: the WebGPU or the plain
+     WebAssembly build, whichever this browser can use. -->
 <script type="module" src="demo/app.js"></script>
 </body>
 </html>
