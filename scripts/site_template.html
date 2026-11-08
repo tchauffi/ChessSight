@@ -4,17 +4,18 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ChessSight &mdash; reading a chess position off a photograph</title>
-<meta name="description" content="Two models trained entirely on synthetic
-  Blender renders read a chess position off a real photograph. Measured on 306
-  held-out photographs: 97.06% of squares, 31.05% of boards exactly." />
+<meta name="description" content="{{META_DESCRIPTION}}" />
 <link rel="canonical" href="https://tchauffi.github.io/ChessSight/" />
 <meta property="og:type" content="website" />
 <meta property="og:title" content="ChessSight" />
-<meta property="og:description" content="Reading a chess position off a
-  photograph, trained entirely on synthetic renders." />
+<meta property="og:description" content="{{META_DESCRIPTION}}" />
 <meta property="og:url" content="https://tchauffi.github.io/ChessSight/" />
 <meta property="og:image"
-  content="https://tchauffi.github.io/ChessSight/assets/ex000010-found.jpg" />
+  content="https://tchauffi.github.io/ChessSight/assets/card.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="A synthetic render of a chessboard beside
+  the pipeline's accuracy on real photographs" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon"
   href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#9822;</text></svg>" />
@@ -210,6 +211,10 @@
     margin: 0;
     max-width: none;
   }
+
+  /* `hidden` is a user-agent rule, so any author `display` beats it: the
+     try-it panel's drop zone and result frame showed before anything loaded. */
+  [hidden] { display: none !important; }
 
   img { max-width: 100%; height: auto; display: block; }
 
@@ -665,8 +670,7 @@
       <img src="{{HERO_PHOTO}}" width="680" alt="A photograph of a chessboard on a table,
         seen at an angle" />
       <span class="hero-arrow" aria-hidden="true">&rarr;</span>
-      <div class="board" role="img" aria-label="The chess position the model
-        read from the photograph, all 64 squares correct">{{HERO_BOARD}}</div>
+      <div class="board" role="img" aria-label="{{HERO_LABEL}}">{{HERO_BOARD}}</div>
     </div>
     <p class="hero-fen"><span class="k">FEN</span>{{HERO_FEN}}</p>
   </header>
@@ -692,10 +696,10 @@
           photograph, to 0.13 squares.</span>
       </div>
       <div class="stat">
-        <span class="stat-value">0.643</span>
+        <span class="stat-value">0.621</span>
         <span class="stat-label">detector mAP</span>
-        <span class="stat-note">Zero-shot on real photographs; 0.888 at
-          mAP@50, 0.942 on the board itself.</span>
+        <span class="stat-note">Zero-shot on real photographs; 0.879 at
+          mAP@50.</span>
       </div>
     </div>
     <p>
@@ -733,15 +737,17 @@
       the weights come to you and the photograph never leaves the browser.
     </p>
     <p>
-      They are quantised to 8 bits to make that possible, which costs
-      accuracy: <strong>61.4% of boards exactly right</strong> here against
-      68.3% for the full-precision pipeline, on the same 306 photographs.
-      Expect a wrong piece more often than the numbers above suggest.
+      They are stored as 16-bit floats to make that possible. Run under
+      onnxruntime, those same graphs read <strong>257 of 306 boards exactly
+      right</strong> against 258 for the full-precision pipeline. The page
+      also shrinks a photograph to 1280 pixels before reading it, which has
+      not been measured, and runs the detector three times per photograph,
+      so give it a few seconds.
     </p>
 
     <div class="try">
       <button class="btn" type="button" id="try-load">
-        Load the models &middot; 76 MB
+        Load the models &middot; 145 MB
       </button>
       <p class="status" id="try-status" data-kind="idle"></p>
 
@@ -788,14 +794,15 @@
       </table>
     </div>
     <p>
-      The errors are lopsided in a useful way. Of the squares that hold a piece,
-      {{PCT_OCCUPIED}} are named correctly, and of the {{WRONG_TOTAL}} squares
-      the pipeline gets wrong across the whole split, {{PCT_MISNAMED}} are a
-      piece it found and then named wrongly &mdash; against {{PCT_MISSED}} it
-      failed to see at all. Just {{N_SPURIOUS}} squares out of {{N_SQUARES}}
-      are empty ones it wrongly filled in. When it is wrong now, it is usually
-      confused rather than blind, and the confusion is specific: a queen called
-      a king accounts for a sixth of every wrong square on the board.
+      Of the squares that hold a piece, {{PCT_OCCUPIED}} are named correctly.
+      The {{WRONG_TOTAL}} squares the pipeline gets wrong across the whole split
+      divide almost evenly three ways: {{PCT_MISNAMED}} are a piece it found and
+      then named wrongly, {{PCT_MISSED}} a piece it failed to see at all, and
+      the rest &mdash; {{N_SPURIOUS}} squares out of {{N_SQUARES}} &mdash; empty
+      ones it wrongly filled in. Misnaming used to dominate: a single look at
+      the photograph misnamed 81 squares, and averaging three looks and checking
+      the material brought that down to the share above. What confusion is left
+      is specific &mdash; a queen and her king read as each other.
     </p>
   </section>
 
@@ -805,15 +812,7 @@
     <h2>How a photograph becomes a position</h2>
     <ol class="steps">
       <li>
-        <span class="step-name"><span class="n">1</span>Find the pieces</span>
-        <p>
-          An RT-DETR detector emits a box and a class for the board and for
-          every piece on it &mdash; six types in two colours. It says what is in
-          the picture, not where on the board it stands.
-        </p>
-      </li>
-      <li>
-        <span class="step-name"><span class="n">2</span>Find the board</span>
+        <span class="step-name"><span class="n">1</span>Find the board</span>
         <p>
           A Swin-T heatmap model regresses the four board corners. Four corners
           give a homography, and a homography turns the photograph's
@@ -821,11 +820,30 @@
         </p>
       </li>
       <li>
-        <span class="step-name"><span class="n">3</span>Assign and orient</span>
+        <span class="step-name"><span class="n">2</span>Find the pieces, three times</span>
         <p>
-          Each piece is placed on the square its base stands on. Square colour
-          parity and where the pieces sit then decide which corner is a8 &mdash;
-          the step that fails in the fourth example above.
+          An RT-DETR detector emits a box and a class for every piece &mdash; six
+          types in two colours &mdash; and it looks three times: at the whole
+          photograph, at a square crop around the board, which gives distant
+          pieces real pixels, and at that crop mirrored. Each piece goes to the
+          square its base stands on, and the three looks are averaged square by
+          square, so a guess only one of them makes is diluted.
+        </p>
+      </li>
+      <li>
+        <span class="step-name"><span class="n">3</span>Check the material</span>
+        <p>
+          No side can hold more of a piece than it starts with. A second white
+          king or a second queen is renamed to the next thing the detector saw
+          on that square &mdash; never to anything it did not propose, and a
+          missing piece is never invented.
+        </p>
+      </li>
+      <li>
+        <span class="step-name"><span class="n">4</span>Orient</span>
+        <p>
+          Square colour parity and where the pieces sit decide which corner is
+          a8 &mdash; the step that fails in the fourth example above.
         </p>
       </li>
     </ol>
@@ -868,10 +886,12 @@
       <li>
         <span class="limit-name">Small pieces</span>
         <p>
-          mAP 0.44 on small objects against 0.94 on the board. Distant
-          boards and low, grazing camera angles degrade badly. Reading a
-          position tolerates this better than the detection score suggests,
-          because a square only needs its piece found once.
+          mAP 0.43 on small objects against 0.98 on large ones. Reading a
+          position tolerates this far better than the detection score
+          suggests: the board crop gives distant pieces back their pixels, and
+          with the board shrunk to about a third of the frame 251 of 306 boards
+          still read exactly. Low, grazing camera angles are another matter
+          &mdash; there the corner model can lose the board altogether.
         </p>
       </li>
       <li>
@@ -880,8 +900,9 @@
           Deciding which corner is a8 is a discrete choice, and when it goes
           wrong the whole position is wrong at once &mdash; a perfectly read
           board can score 48 of 64 purely because it was read from the wrong
-          end. Sparse endgames give it the least to work with, and are exactly
-          where it fails.
+          end, and one missed pawn can tip the decision: a board here that gets
+          63 of 64 squares right is then turned around. Sparse endgames give it
+          the least to work with, and are exactly where it fails.
         </p>
       </li>
       <li>
@@ -896,10 +917,11 @@
       <li>
         <span class="limit-name">Tall pieces</span>
         <p>
-          Queen for king is the most common single error, with rook for knight
-          behind it. Both are pairs that differ mainly in the shape of a
-          silhouette a few dozen pixels tall, and a crowded back rank hides
-          most of that difference.
+          A queen and her king read as each other is the most common single
+          error by some distance. The two differ mainly in the shape of a
+          silhouette a few dozen pixels tall, a crowded back rank hides most of
+          that difference, and swapping them leaves both counts legal, so
+          checking the material cannot catch it.
         </p>
       </li>
       <li>
@@ -927,13 +949,13 @@
     <h2>Running it</h2>
     <pre><span class="c"># one photograph in, one FEN per line out</span>
 uv run chesssight predict photo.jpg \
-  --detector runs/rtdetr_corners/best \
+  --detector runs/rtdetr_v4/best \
   --corners  runs/corner_swin_v2/best \
   --diagram  position.svg
 
 <span class="c"># the same pipeline with a browser in front of it</span>
 uv run chesssight demo \
-  --detector runs/rtdetr_corners/best \
+  --detector runs/rtdetr_v4/best \
   --corners  runs/corner_swin_v2/best
 
 <span class="c"># render training data of your own</span>
@@ -975,7 +997,8 @@ uv run chesssight synth run -c configs/default.yaml -n 20000 -w 2</pre>
 {{PIECE_DEFS}}
 </div>
 
-<script src="vendor/ort.min.js"></script>
+<!-- onnxruntime is loaded by app.js on demand: the WebGPU or the plain
+     WebAssembly build, whichever this browser can use. -->
 <script type="module" src="demo/app.js"></script>
 </body>
 </html>

@@ -3,6 +3,7 @@ export const C = {
   "detectorSize": 640,
   "cornerSize": 448,
   "cornerStride": 4,
+  "modelVersion": "7924b92120c1bdbe",
   "labels": [
     "white_pawn",
     "white_knight",

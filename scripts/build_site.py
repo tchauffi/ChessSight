@@ -54,7 +54,9 @@ EXAMPLES: tuple[dict[str, Any], ...] = (
             "where the black queen and king &mdash; standing shoulder to "
             "shoulder &mdash; are read as each other. Naming the two tallest "
             "pieces apart on a crowded back rank is what remains of this "
-            "problem."
+            "problem &mdash; and a swap is the one version of it that checking "
+            "the material cannot catch, since each side still has one queen "
+            "and one king."
         ),
         "expect_wrong": 2,
     },
@@ -75,25 +77,27 @@ EXAMPLES: tuple[dict[str, Any], ...] = (
         "verdict": "bad",
         "title": "The back rank, where the tall pieces stand together",
         "text": (
-            "Three wrong squares, all on the first rank: the queen on d1 is "
-            "called a king, the king on e1 shrinks to a pawn behind its "
-            "neighbours, and the bishop on f1 becomes a rook. A crowded back "
+            "Two wrong squares, both on the first rank: the queen on d1 is "
+            "called a king, and the king on e1 shrinks to a pawn behind its "
+            "neighbours. The bishop on f1, which a single look at the "
+            "photograph called a rook, now comes back right. A crowded back "
             "rank seen from low down is the hardest thing on the board &mdash; "
-            "queen-for-king is still the most common mistake in the whole "
-            "split, though one square fewer goes wrong here than before."
+            "queen and king read as each other is still the most common "
+            "mistake in the whole split."
         ),
-        "expect_wrong": 3,
+        "expect_wrong": 2,
     },
     {
         "id": "chessred_000101",
         "verdict": "bad",
         "title": "Read from the wrong end",
         "text": (
-            "The worst board in the split, and the pieces are not the problem: "
-            "turn this answer around and it scores 64 of 64. Eight pieces on an "
-            "almost empty board leave very little evidence for the last step, "
-            "deciding which corner is a8, and it went the wrong way. Nothing "
-            "else in 306 photographs is wrong by more than five squares."
+            "One of the two worst boards in the split, and the pieces are not "
+            "the problem: turn this answer around and it scores 64 of 64. Eight "
+            "pieces on an almost empty board leave very little evidence for the "
+            "last step, deciding which corner is a8, and it went the wrong way. "
+            "The other is the same failure tipped by one missed pawn. Nothing "
+            "else in 306 photographs is wrong by more than four squares."
         ),
         "expect_wrong": 16,
     },
@@ -197,6 +201,7 @@ def refresh(detector: Path, corners: Path, data_root: Path, split: str) -> None:
 
     DATA.write_text(json.dumps(payload, indent=1), encoding="utf-8")
     print(f"wrote {DATA.relative_to(ROOT)}")
+    write_card(data_root, payload)
 
 
 def _score(grid: Any, truth: Any, square_name: Any) -> dict[str, Any]:
@@ -301,6 +306,103 @@ def _copy_synth(data_root: Path, fit: Any) -> None:
         resized.save(ASSETS / f"synth-{n}.jpg", "JPEG", quality=78, optimize=True)
 
 
+#: The render on the link-preview card: the most photo-real of SYNTH_IDS.
+CARD_RENDER = "000042"
+CARD_SIZE = (1200, 630)
+
+
+def _font(size: int, *candidates: str) -> Any:
+    from PIL import ImageFont
+
+    for name in candidates:
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default(size=size)
+
+
+def _wrap(draw: Any, text: str, font: Any, width: int) -> list[str]:
+    lines: list[str] = []
+    for word in text.split():
+        trial = f"{lines[-1]} {word}" if lines else word
+        if lines and draw.textlength(trial, font=font) <= width:
+            lines[-1] = trial
+        else:
+            lines.append(word)
+    return lines
+
+
+def write_card(data_root: Path, payload: dict[str, Any]) -> None:
+    """The 1200x630 image link previews show (``og:image``).
+
+    Built from our own synthetic render rather than a ChessReD photograph:
+    a preview card strips the attribution that CC BY-NC-SA requires, and the
+    synthetic renders carry no such terms. The numbers come from ``payload``,
+    so the card cannot fall behind the page.
+    """
+    from PIL import Image, ImageDraw
+
+    source = data_root.parent / "train6_border" / "images" / f"{CARD_RENDER}.jpg"
+    if not source.is_file():
+        print(f"  no render at {source}, keeping the committed card")
+        return
+
+    width, height = CARD_SIZE
+    ground, ink, soft, muted = "#eceeea", "#151815", "#3c433d", "#5b625c"
+    accent, rule = "#8f6210", "#cdd2c9"
+    card = Image.new("RGB", CARD_SIZE, ground)
+
+    render = Image.open(source).convert("RGB")
+    side = min(render.size)
+    left = (render.width - side) // 2
+    top = (render.height - side) // 2
+    render = render.crop((left, top, left + side, top + side))
+    card.paste(render.resize((height, height), Image.Resampling.LANCZOS), (0, 0))
+
+    draw = ImageDraw.Draw(card)
+    mono = ("DejaVuSansMono.ttf", "Menlo.ttc", "Consolas.ttf")
+    mono_bold = ("DejaVuSansMono-Bold.ttf", "Menlo.ttc", "consolab.ttf")
+    serif = ("/usr/share/fonts/X11/Type1/c0648bt_.pfb", "DejaVuSerif.ttf")
+    x, right = height + 56, width - 56
+    column = right - x
+
+    draw.text((x, 58), "CHESSSIGHT", font=_font(17, *mono), fill=accent)
+    title_font = _font(38, *mono_bold)
+    y = 96
+    for line in _wrap(
+        draw, "Reading a chess position off a photograph", title_font, column
+    ):
+        draw.text((x, y), line, font=title_font, fill=ink)
+        y += 48
+    y += 26
+    draw.line((x, y, right, y), fill=rule, width=2)
+    y += 30
+
+    number_font = _font(58, *mono_bold)
+    label_font = _font(22, *serif)
+    for value, label in (
+        (f"{payload['exact']:.1%}", "of boards read exactly"),
+        (f"{payload['squares']:.2%}", "of squares read correctly"),
+    ):
+        draw.text((x, y), value, font=number_font, fill=ink)
+        draw.text((x, y + 66), label, font=label_font, fill=muted)
+        y += 118
+
+    note = (
+        f"{payload['photographs']} real photographs, held out. Trained only on "
+        "synthetic renders like this one."
+    )
+    note_font = _font(21, *serif)
+    y = height - 52 - 28 * len(_wrap(draw, note, note_font, column))
+    for line in _wrap(draw, note, note_font, column):
+        draw.text((x, y), line, font=note_font, fill=soft)
+        y += 28
+
+    card.save(ASSETS / "card.png", optimize=True)
+    print(f"wrote {(ASSETS / 'card.png').relative_to(ROOT)}")
+
+
 # --------------------------------------------------------------------------
 # render: needs only the standard library
 # --------------------------------------------------------------------------
@@ -350,8 +452,23 @@ def write_constants(detector: Path | None = None) -> None:
             "cornerStride": meta["corner_stride"],
         }
 
+    # Names the browser's model cache: a new export gets a new cache rather
+    # than being served the old weights from a previous visit.
+    model_version = None
+    model_files = [DOCS / "models" / name for name in ("detector.onnx", "corners.onnx")]
+    if all(path.is_file() for path in model_files):
+        import hashlib
+
+        digest = hashlib.sha256()
+        for path in model_files:
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(block)
+        model_version = digest.hexdigest()[:16]
+
     payload = {
         **sizes,
+        "modelVersion": model_version,
         "labels": list(DETECTION_LABELS),
         "boardIndex": BOARD_INDEX,
         "cornerIndex": CORNER_INDEX,
@@ -423,6 +540,26 @@ def render() -> None:
 
     kinds = payload["kinds"]
     wrong_total = payload["wrong_squares"]
+    # The hero is the first impression, so it is a clean read when there is
+    # one -- a board with red squares and no caption reads as a broken demo.
+    hero = next(
+        (e for e in payload["examples"] if e["wrong_count"] == 0),
+        payload["examples"][0],
+    )
+    hero_label = "The chess position the model read from the photograph" + (
+        ", all 64 squares correct"
+        if hero["wrong_count"] == 0
+        else f", {hero['wrong_count']} of 64 squares wrong"
+    )
+    # Generated, not typed: this is what search results and link previews
+    # show, and a hand-written copy sat at v0.1.0's numbers for two releases.
+    description = (
+        "Two models trained entirely on synthetic Blender renders read a chess "
+        "position off a real photograph. Measured on "
+        f"{payload['photographs']} held-out photographs: "
+        f"{payload['squares']:.2%} of squares, {payload['exact']:.1%} of "
+        "boards exactly."
+    )
 
     for key, value in {
         "PIECE_DEFS": piece_defs(),
@@ -446,11 +583,11 @@ def render() -> None:
         "PCT_MISNAMED": f"{kinds['misnamed'] / wrong_total:.0%}",
         "N_SPURIOUS": str(kinds["spurious"]),
         "WORST": str(payload["worst"]),
-        "HERO_PHOTO": payload["examples"][0]["photo"],
-        "HERO_BOARD": (DOCS / payload["examples"][0]["read"]).read_text(
-            encoding="utf-8"
-        ),
-        "HERO_FEN": payload["examples"][0]["fen"],
+        "HERO_PHOTO": hero["photo"],
+        "HERO_BOARD": (DOCS / hero["read"]).read_text(encoding="utf-8"),
+        "HERO_FEN": hero["fen"],
+        "HERO_LABEL": hero_label,
+        "META_DESCRIPTION": description,
     }.items():
         html = html.replace("{{" + key + "}}", value)
 
