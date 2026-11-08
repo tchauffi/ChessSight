@@ -19,14 +19,20 @@
 
 import { readFileSync } from "node:fs";
 import {
+  boardCrop,
   boardToImage,
   colourScore,
-  decodePeaks,
-  gridFrom,
-  orderClockwise,
+  enforceMaterial,
+  findQuad,
+  fullFrameWeight,
+  fuse,
+  gridFromScores,
   orient,
   pieceScore,
+  readBoard,
   squareLuminance,
+  squareScores,
+  toPhoto,
 } from "../docs/demo/pipeline.js";
 import { C } from "../docs/demo/constants.js";
 
@@ -58,13 +64,7 @@ for (const item of cases) {
   const grey = Float32Array.from(item.grey);
 
   // 1. corner peaks -> quad
-  const peaks = decodePeaks(heatmap, heatSize, heatSize, C.cornerStride);
-  const quad = orderClockwise(
-    peaks.slice(0, 4).map((p) => [
-      (p[0] * width) / C.cornerSize,
-      (p[1] * height) / C.cornerSize,
-    ]),
-  );
+  const quad = findQuad(heatmap, heatSize, width, height);
   let worst = 0;
   for (let i = 0; i < 4; i += 1) {
     worst = Math.max(
@@ -92,19 +92,42 @@ for (const item of cases) {
     fail(id, "square luminance", `worst square off by ${worstLuminance.toExponential(2)}`);
   }
 
-  // 3. detections -> grid
-  const grid = gridFrom(item.detections, homography);
-  const wrong = [];
-  for (let r = 0; r < 8; r += 1) {
-    for (let f = 0; f < 8; f += 1) {
-      if (grid[r][f] !== expected.grid[r][f]) {
-        wrong.push(`[${r}][${f}] js=${grid[r][f]} py=${expected.grid[r][f]}`);
+  // 3. the board crop, exactly: a one-pixel shift moves every crop box
+  const crop = boardCrop(expected.quad, width, height);
+  if (crop.join() !== expected.crop.join()) {
+    fail(id, "board crop", `js=[${crop}] py=[${expected.crop}]`);
+  }
+
+  // 4. three passes -> photograph pixels -> per-square scores -> fused grid
+  const { full, crop: zoomed, mirrored } = item.passes;
+  const scores = fuse([
+    [squareScores(full, homography), fullFrameWeight(expected.crop[2], width, height)],
+    [squareScores(toPhoto(zoomed, expected.crop, false), homography), 1],
+    [squareScores(toPhoto(mirrored, expected.crop, true), homography), 1],
+  ]);
+  const compare = (what, got, want) => {
+    const wrong = [];
+    for (let r = 0; r < 8; r += 1) {
+      for (let f = 0; f < 8; f += 1) {
+        if (got[r][f] !== want[r][f]) wrong.push(`[${r}][${f}] js=${got[r][f]} py=${want[r][f]}`);
       }
     }
-  }
-  if (wrong.length) fail(id, "grid assignment", wrong.join(", "));
+    if (wrong.length) fail(id, what, wrong.join(", "));
+  };
+  const fused = gridFromScores(scores, C.threshold);
+  compare("fused grid", fused, expected.fusedGrid);
 
-  // 4. orientation vote
+  // 5. the material rule, from Python's fused grid so a stage-4 failure
+  //    does not cascade into this one
+  compare("material rule", enforceMaterial(expected.fusedGrid, scores), expected.grid);
+
+  // 6. end to end through readBoard, as the page calls it
+  const result = readBoard(expected.quad, item.passes, { width, height, grey }, expected.crop);
+  if (result.fen !== expected.fen) {
+    fail(id, "fen", `js=${result.fen} py=${expected.fen}`);
+  }
+
+  // 7. orientation vote
   const vote = orient(expected.grid, expected.luminance);
   if (vote.turns !== expected.turns) {
     fail(id, "orientation", `js turns=${vote.turns} py turns=${expected.turns}`);
@@ -119,14 +142,14 @@ for (const item of cases) {
     fail(id, "pawn penalty", `js=${vote.pawns} py=${expected.pawns}`);
   }
 
-  // 5. the scores on their own, so a failure above localises
+  // 8. the scores on their own, so a failure above localises
   const cs = colourScore(expected.luminance);
   const ps = pieceScore(expected.grid);
   if (!Number.isFinite(cs) || !Number.isFinite(ps)) {
     fail(id, "scores", "non-finite");
   }
 
-  if (!failures) console.log(`  ok   ${id}`);
+  if (!failures) console.log(`  ok   ${id} (${expected.relabelled} relabelled)`);
 }
 
 if (failures) {

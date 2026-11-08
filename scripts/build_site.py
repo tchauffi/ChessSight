@@ -319,7 +319,16 @@ def write_constants(detector: Path | None = None) -> None:
         PAWN_HOME_WEIGHT,
         SAMPLE_FRACTION,
     )
-    from chesssight.train.position import FOOT_X, FOOT_Y, POSITION_THRESHOLD
+    from chesssight.train.position import (
+        CANDIDATE_FLOOR,
+        CROP_SIDE_MARGIN,
+        CROP_TOP_MARGIN,
+        FOOT_X,
+        FOOT_Y,
+        OVER_MATERIAL_COST,
+        POSITION_THRESHOLD,
+        STARTING_MATERIAL,
+    )
 
     calibration = None
     if detector is not None:
@@ -349,6 +358,11 @@ def write_constants(detector: Path | None = None) -> None:
         "threshold": POSITION_THRESHOLD,
         "footX": FOOT_X,
         "footY": FOOT_Y,
+        "candidateFloor": CANDIDATE_FLOOR,
+        "cropSideMargin": CROP_SIDE_MARGIN,
+        "cropTopMargin": CROP_TOP_MARGIN,
+        "startingMaterial": dict(STARTING_MATERIAL),
+        "overMaterialCost": OVER_MATERIAL_COST,
         "sampleFraction": SAMPLE_FRACTION,
         "minColourMargin": MIN_COLOUR_MARGIN,
         "pawnHomeWeight": PAWN_HOME_WEIGHT,

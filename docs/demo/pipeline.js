@@ -240,13 +240,19 @@ export function calibrate(score, scale, bias) {
 }
 
 // --------------------------------------------------------------------- grid
+//
+// Mirrors chesssight.train.position: square_scores, fuse, grid_from_scores,
+// enforce_material, board_crop, full_frame_weight. Maps keep insertion order
+// exactly as Python dicts do, so ties break the same way in both.
 
-/** Assign each detected piece to the square its base stands on, best score winning. */
-export function gridFrom(detections, homography) {
+const LETTERS = ["", "P", "N", "B", "R", "Q", "K", "p", "n", "b", "r", "q", "k"];
+const key = (rank, file, classId) => `${rank},${file},${classId}`;
+const unkey = (k) => k.split(",").map(Number);
+
+/** Every class proposed on every square, best score per class: Map "r,f,c" -> score. */
+export function squareScores(detections, homography) {
   const inverse = invert3(homography);
-  const grid = Array.from({ length: 8 }, () => new Array(8).fill(0));
-  const best = Array.from({ length: 8 }, () => new Array(8).fill(0));
-
+  const scores = new Map();
   for (const detection of detections) {
     if (detection.label === C.boardIndex || detection.label === C.cornerIndex) continue;
     const [x0, y0, x1, y1] = detection.box;
@@ -256,12 +262,131 @@ export function gridFrom(detections, homography) {
     const file = Math.floor(u);
     const rank = Math.floor(v);
     if (file < 0 || file > 7 || rank < 0 || rank > 7) continue;
-    if (detection.score > best[rank][file]) {
-      best[rank][file] = detection.score;
-      grid[rank][file] = detection.label + 1;
+    const k = key(rank, file, detection.label + 1);
+    scores.set(k, Math.max(scores.get(k) ?? 0, detection.score));
+  }
+  return scores;
+}
+
+/** Weighted mean over passes; a class a pass did not propose counts as zero there. */
+export function fuse(passes) {
+  const total = passes.reduce((sum, [, weight]) => sum + weight, 0);
+  const fused = new Map();
+  for (const [scores, weight] of passes) {
+    for (const [k, score] of scores) fused.set(k, (fused.get(k) ?? 0) + weight * score);
+  }
+  for (const [k, value] of fused) fused.set(k, value / total);
+  return fused;
+}
+
+/** Each square's best class, if it clears the threshold. */
+export function gridFromScores(scores, threshold) {
+  const grid = Array.from({ length: 8 }, () => new Array(8).fill(0));
+  const best = Array.from({ length: 8 }, () => new Array(8).fill(0));
+  for (const [k, score] of scores) {
+    const [rank, file, classId] = unkey(k);
+    if (score >= threshold && score > best[rank][file]) {
+      best[rank][file] = score;
+      grid[rank][file] = classId;
     }
   }
   return grid;
+}
+
+function materialCost(classId, count) {
+  const cap = C.startingMaterial[LETTERS[classId].toUpperCase()];
+  return C.overMaterialCost * Math.max(0, count - cap);
+}
+
+/**
+ * Relabel squares, best move first, until no colour holds more than its
+ * starting material. Only to classes the detector proposed there; a shortfall
+ * (a missing king) is left visible rather than filled.
+ */
+export function enforceMaterial(grid, scores, floor = C.candidateFloor) {
+  const g = grid.map((row) => [...row]);
+  const candidates = new Map();
+  for (const [k, score] of scores) {
+    if (score < floor) continue;
+    const [rank, file, classId] = unkey(k);
+    const square = `${rank},${file}`;
+    if (!candidates.has(square)) candidates.set(square, new Map());
+    candidates.get(square).set(classId, score);
+  }
+
+  const counts = new Map();
+  for (const row of g) for (const v of row) if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+  const count = (c) => counts.get(c) ?? 0;
+
+  for (;;) {
+    let best = null;
+    for (const [square, cell] of candidates) {
+      const [rank, file] = square.split(",").map(Number);
+      const current = g[rank][file];
+      if (!current) continue;
+      const here = Math.log(Math.max(cell.get(current) ?? floor, 1e-4));
+      for (const [classId, score] of cell) {
+        if (classId === current) continue;
+        const gain =
+          Math.log(score) -
+          here +
+          materialCost(current, count(current)) -
+          materialCost(current, count(current) - 1) +
+          materialCost(classId, count(classId)) -
+          materialCost(classId, count(classId) + 1);
+        if (gain > 1e-9 && (best === null || gain > best[0])) {
+          best = [gain, rank, file, classId];
+        }
+      }
+    }
+    if (best === null) return g;
+    const [, rank, file, classId] = best;
+    counts.set(g[rank][file], count(g[rank][file]) - 1);
+    counts.set(classId, count(classId) + 1);
+    g[rank][file] = classId;
+  }
+}
+
+/** Python's round(): half to even. Math.round would disagree on exact halves. */
+function roundHalfEven(x) {
+  const r = Math.round(x);
+  return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
+}
+
+/** [left, top, side] of a square crop around the board, inside the image. */
+export function boardCrop(quad, width, height) {
+  const xs = quad.map((p) => p[0]);
+  const ys = quad.map((p) => p[1]);
+  let x0 = Math.min(...xs);
+  let x1 = Math.max(...xs);
+  let y0 = Math.min(...ys);
+  let y1 = Math.max(...ys);
+  const w = x1 - x0;
+  const h = y1 - y0;
+  x0 -= C.cropSideMargin * w;
+  x1 += C.cropSideMargin * w;
+  y0 -= C.cropTopMargin * h;
+  y1 += C.cropSideMargin * h;
+  const side = Math.min(Math.max(x1 - x0, y1 - y0), width, height);
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const left = roundHalfEven(Math.min(Math.max(cx - side / 2, 0), width - side));
+  const top = roundHalfEven(Math.min(Math.max(cy - side / 2, 0), height - side));
+  return [left, top, roundHalfEven(side)];
+}
+
+/** The full frame's vote: its board resolution relative to the crop's, squared. */
+export function fullFrameWeight(side, width, height) {
+  return (side / Math.min(width, height)) ** 2;
+}
+
+/** Detections from a crop view (optionally mirrored) back into photograph pixels. */
+export function toPhoto(detections, [left, top, side], mirrored) {
+  return detections.map((d) => {
+    let [x0, y0, x1, y1] = d.box;
+    if (mirrored) [x0, x1] = [side - x1, side - x0];
+    return { ...d, box: [x0 + left, y0 + top, x1 + left, y1 + top] };
+  });
 }
 
 // -------------------------------------------------------------- orientation
@@ -421,40 +546,50 @@ export function gridToFen(grid) {
 
 // ------------------------------------------------------------------ the read
 
-/** Everything above, in order: two model runs in, one position out. */
-export function readPosition({ heatmap, heatSize, logits, boxes, queries, classes },
-  { width, height, grey }) {
+/** Corner heatmap -> board quad in photograph pixels, or null with under four peaks. */
+export function findQuad(heatmap, heatSize, width, height) {
   const peaks = decodePeaks(heatmap, heatSize, heatSize, C.cornerStride);
-  if (peaks.length < 4) return { found: false };
-
-  const scale = (p) => [
-    (p[0] * width) / C.cornerSize,
-    (p[1] * height) / C.cornerSize,
-  ];
-  let quad = orderClockwise(peaks.slice(0, 4).map(scale));
-
-  let detections = decodeDetections(
-    logits, boxes, queries, classes, width, height, 0,
+  if (peaks.length < 4) return null;
+  return orderClockwise(
+    peaks.slice(0, 4).map((p) => [(p[0] * width) / C.cornerSize, (p[1] * height) / C.cornerSize]),
   );
+}
+
+/** One detector run -> calibrated detections in that view's own pixels, no floor. */
+export function viewDetections({ logits, boxes, queries, classes }, viewWidth, viewHeight) {
+  const detections = decodeDetections(logits, boxes, queries, classes, viewWidth, viewHeight, 0);
   if (C.calibration) {
     for (const d of detections) {
       d.score = calibrate(d.score, C.calibration.scale, C.calibration.bias);
     }
-    detections = detections.filter((d) => d.score >= C.threshold);
   }
+  return detections;
+}
 
+/**
+ * Three detector passes in, one position out. Mirrors read_board: the full
+ * frame, the board crop and the mirrored crop are fused per square, checked
+ * against starting material, then oriented.
+ */
+export function readBoard(quad, { full, crop, mirrored }, { width, height, grey }, cropBox) {
   const homography = boardToImage(quad);
-  let grid = gridFrom(detections, homography);
+  const zoomed = toPhoto(crop, cropBox, false);
+  const reflected = toPhoto(mirrored, cropBox, true);
+  const scores = fuse([
+    [squareScores(full, homography), fullFrameWeight(cropBox[2], width, height)],
+    [squareScores(zoomed, homography), 1],
+    [squareScores(reflected, homography), 1],
+  ]);
+  let grid = enforceMaterial(gridFromScores(scores, C.threshold), scores);
   const luminance = squareLuminance(grey, width, height, homography);
   const { turns, colour, pieces, pawns } = orient(grid, luminance);
   grid = rotate(grid, turns);
-  quad = [...quad.slice(turns), ...quad.slice(0, turns)];
 
   return {
     found: true,
     grid,
-    quad,
-    detections,
+    quad: [...quad.slice(turns), ...quad.slice(0, turns)],
+    detections: zoomed.filter((d) => d.score >= C.threshold),
     fen: gridToFen(grid),
     evidence: { colour, pieces, pawns },
   };
