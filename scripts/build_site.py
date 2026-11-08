@@ -54,7 +54,9 @@ EXAMPLES: tuple[dict[str, Any], ...] = (
             "where the black queen and king &mdash; standing shoulder to "
             "shoulder &mdash; are read as each other. Naming the two tallest "
             "pieces apart on a crowded back rank is what remains of this "
-            "problem."
+            "problem &mdash; and a swap is the one version of it that checking "
+            "the material cannot catch, since each side still has one queen "
+            "and one king."
         ),
         "expect_wrong": 2,
     },
@@ -75,25 +77,27 @@ EXAMPLES: tuple[dict[str, Any], ...] = (
         "verdict": "bad",
         "title": "The back rank, where the tall pieces stand together",
         "text": (
-            "Three wrong squares, all on the first rank: the queen on d1 is "
-            "called a king, the king on e1 shrinks to a pawn behind its "
-            "neighbours, and the bishop on f1 becomes a rook. A crowded back "
+            "Two wrong squares, both on the first rank: the queen on d1 is "
+            "called a king, and the king on e1 shrinks to a pawn behind its "
+            "neighbours. The bishop on f1, which a single look at the "
+            "photograph called a rook, now comes back right. A crowded back "
             "rank seen from low down is the hardest thing on the board &mdash; "
-            "queen-for-king is still the most common mistake in the whole "
-            "split, though one square fewer goes wrong here than before."
+            "queen and king read as each other is still the most common "
+            "mistake in the whole split."
         ),
-        "expect_wrong": 3,
+        "expect_wrong": 2,
     },
     {
         "id": "chessred_000101",
         "verdict": "bad",
         "title": "Read from the wrong end",
         "text": (
-            "The worst board in the split, and the pieces are not the problem: "
-            "turn this answer around and it scores 64 of 64. Eight pieces on an "
-            "almost empty board leave very little evidence for the last step, "
-            "deciding which corner is a8, and it went the wrong way. Nothing "
-            "else in 306 photographs is wrong by more than five squares."
+            "One of the two worst boards in the split, and the pieces are not "
+            "the problem: turn this answer around and it scores 64 of 64. Eight "
+            "pieces on an almost empty board leave very little evidence for the "
+            "last step, deciding which corner is a8, and it went the wrong way. "
+            "The other is the same failure tipped by one missed pawn. Nothing "
+            "else in 306 photographs is wrong by more than four squares."
         ),
         "expect_wrong": 16,
     },

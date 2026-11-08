@@ -2,25 +2,25 @@
  "photographs": 306,
  "split": "test",
  "located": 306,
- "squares": 0.9931576797385621,
- "exact": 0.7124183006535948,
- "within_one": 0.9183006535947712,
- "within_three": 0.9967320261437909,
- "occupied_named": 0.984588496981252,
- "wrong_squares": 134,
+ "squares": 0.9944852941176471,
+ "exact": 0.8431372549019608,
+ "within_one": 0.9248366013071896,
+ "within_three": 0.9836601307189542,
+ "occupied_named": 0.9888782967905942,
+ "wrong_squares": 108,
  "kinds": {
-  "missed": 16,
-  "spurious": 37,
-  "misnamed": 81
+  "missed": 36,
+  "spurious": 38,
+  "misnamed": 34
  },
  "histogram": [
   {
    "wrong": 0,
-   "count": 218
+   "count": 258
   },
   {
    "wrong": 1,
-   "count": 63
+   "count": 25
   },
   {
    "wrong": 2,
@@ -28,11 +28,11 @@
   },
   {
    "wrong": 3,
-   "count": 7
+   "count": 1
   },
   {
    "wrong": 4,
-   "count": 0
+   "count": 3
   },
   {
    "wrong": 5,
@@ -40,16 +40,16 @@
   },
   {
    "wrong": 6,
-   "count": 1
+   "count": 2
   }
  ],
- "worst": 16,
+ "worst": 18,
  "examples": [
   {
    "id": "chessred_000010",
    "verdict": "near",
    "title": "Two squares, one royal swap",
-   "text": "Thirty-two pieces on a glossy vinyl board, seen at an angle. Sixty-two squares are right; the two that are not are d8 and e8, where the black queen and king &mdash; standing shoulder to shoulder &mdash; are read as each other. Naming the two tallest pieces apart on a crowded back rank is what remains of this problem.",
+   "text": "Thirty-two pieces on a glossy vinyl board, seen at an angle. Sixty-two squares are right; the two that are not are d8 and e8, where the black queen and king &mdash; standing shoulder to shoulder &mdash; are read as each other. Naming the two tallest pieces apart on a crowded back rank is what remains of this problem &mdash; and a swap is the one version of it that checking the material cannot catch, since each side still has one queen and one king.",
    "expect_wrong": 2,
    "photo": "assets/ex000010-photo.jpg",
    "found": "assets/ex000010-found.jpg",
@@ -76,32 +76,31 @@
    "fen": "rnbqkbnr/ppp1pppp/8/3p4/1P6/8/P1PPPPPP/RNBQKBNR",
    "wrong": [],
    "wrong_count": 0,
-   "boxes": 49
+   "boxes": 38
   },
   {
    "id": "chessred_000001",
    "verdict": "bad",
    "title": "The back rank, where the tall pieces stand together",
-   "text": "Three wrong squares, all on the first rank: the queen on d1 is called a king, the king on e1 shrinks to a pawn behind its neighbours, and the bishop on f1 becomes a rook. A crowded back rank seen from low down is the hardest thing on the board &mdash; queen-for-king is still the most common mistake in the whole split, though one square fewer goes wrong here than before.",
-   "expect_wrong": 3,
+   "text": "Two wrong squares, both on the first rank: the queen on d1 is called a king, and the king on e1 shrinks to a pawn behind its neighbours. The bishop on f1, which a single look at the photograph called a rook, now comes back right. A crowded back rank seen from low down is the hardest thing on the board &mdash; queen and king read as each other is still the most common mistake in the whole split.",
+   "expect_wrong": 2,
    "photo": "assets/ex000001-photo.jpg",
    "found": "assets/ex000001-found.jpg",
    "read": "assets/ex000001-read.svg",
    "truth": "assets/ex000001-truth.svg",
-   "fen": "rnbqkbnr/pppppppp/8/8/1P6/8/P1PPPPPP/RNBKPRNR",
+   "fen": "rnbqkbnr/pppppppp/8/8/1P6/8/P1PPPPPP/RNBKPBNR",
    "wrong": [
     "d1",
-    "e1",
-    "f1"
+    "e1"
    ],
-   "wrong_count": 3,
-   "boxes": 53
+   "wrong_count": 2,
+   "boxes": 41
   },
   {
    "id": "chessred_000101",
    "verdict": "bad",
    "title": "Read from the wrong end",
-   "text": "The worst board in the split, and the pieces are not the problem: turn this answer around and it scores 64 of 64. Eight pieces on an almost empty board leave very little evidence for the last step, deciding which corner is a8, and it went the wrong way. Nothing else in 306 photographs is wrong by more than five squares.",
+   "text": "One of the two worst boards in the split, and the pieces are not the problem: turn this answer around and it scores 64 of 64. Eight pieces on an almost empty board leave very little evidence for the last step, deciding which corner is a8, and it went the wrong way. The other is the same failure tipped by one missed pawn. Nothing else in 306 photographs is wrong by more than four squares.",
    "expect_wrong": 16,
    "photo": "assets/ex000101-photo.jpg",
    "found": "assets/ex000101-found.jpg",
@@ -127,7 +126,7 @@
     "h1"
    ],
    "wrong_count": 16,
-   "boxes": 59
+   "boxes": 34
   }
  ],
  "synth": [
